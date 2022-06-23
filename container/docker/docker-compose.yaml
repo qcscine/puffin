@@ -1,0 +1,13 @@
+version: "3"
+services:
+  puffin:
+    image: puffin:1.0.0
+    #build: .. # Enable this line in order to also build the image from scratch
+    volumes:
+     - /TO_BE_ADDED:/scratch
+    network_mode: "host"
+    environment:
+     - PUFFIN_DATABASE_IP=127.0.0.1
+     - PUFFIN_DATABASE_PORT=27017
+     - PUFFIN_DATABASE_NAME=test_network
+

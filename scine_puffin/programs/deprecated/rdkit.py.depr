@@ -1,0 +1,55 @@
+# -*- coding: utf-8 -*-
+__copyright__ = """ This code is licensed under the 3-clause BSD license.
+Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+See LICENSE.txt for details.
+"""
+
+from typing import List
+import importlib
+
+from ..program import Program
+from scine_puffin.config import Configuration
+
+
+class Rdkit(Program):
+    """
+    Setup of RDKit. For a successful set-up rdkit is required to be present in the python path.
+    """
+
+    def __init__(self, settings: dict):
+        super().__init__(settings)
+
+    def install(self, build_dir: str, install_dir: str, ncores: int):
+        if self.root:
+            raise NotImplementedError
+        elif self.source:
+            raise NotImplementedError
+        else:
+            # TODO If check_install is applied this is not necessary anymore
+            chem = importlib.util.find_spec("rdkit", package="Chem")
+            all_chem = importlib.util.find_spec("rdkit", package="Chem.AllChem")
+            if chem is None or all_chem is None:
+                raise ImportError("Miising RDKit package including 'rdkit.Chem.AllChem'.")
+
+    def check_install(self) -> bool:
+        """
+        Checks whether RDKit is installed and found by python.
+        Returns false otherwise.
+        """
+        chem = importlib.util.find_spec("rdkit", package="Chem")
+        all_chem = importlib.util.find_spec("rdkit", package="Chem.AllChem")
+        if chem is None or all_chem is None:
+            return False
+        return True
+
+    def setup_environment(self, config: Configuration, env: dict, executables: dict):
+        if self.root:
+            # TODO One could append RDKits location to PYTHONPATH here
+            pass
+        elif self.source:
+            pass
+        else:
+            pass
+
+    def available_models(self) -> List[str]:
+        return []

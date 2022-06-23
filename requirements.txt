@@ -1,0 +1,8 @@
+argparse
+gitpython
+numpy
+psutil
+python-daemon
+pyyaml
+scipy
+setproctitle

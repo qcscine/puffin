@@ -1,0 +1,216 @@
+# -*- coding: utf-8 -*-
+__copyright__ = """ This code is licensed under the 3-clause BSD license.
+Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+See LICENSE.txt for details.
+"""
+
+import os
+import math
+from ast import literal_eval
+from scine_puffin.config import Configuration
+from ..templates.job import Job, calculation_context, job_configuration_wrapper
+from ...utilities import masm_helper
+
+
+class FinalConformerDeduplication(Job):
+    """
+    A job analyzing all optimized minima resulting from a set of conformer
+    guesses.
+    The given model is used as a hint for the quality of the bond orders that
+    are to be used when generating the ``molassembler`` graph.
+
+    **Order Name**
+      ``final_conformer_deduplication``
+
+    **Optional Settings**
+      Optional settings are read from the ``settings`` field, which is part of
+      any ``Calculation`` stored in a SCINE Database.
+      Possible settings for this job are:
+
+      use_distance_connectivity :: bool
+        If ``True``, the structure's connectivity is derived from interatomic
+        distances via the utils.BondDetector: The bond orders used for
+        interpretation are set to the maximum between those given in the
+        ``bond_orders`` property and 1.0, whereever the utils.BondDetector
+        detects a bond, and to 0.0 elsewhere. (default: True)
+      enforce_bond_order_model :: bool
+        If ``True``, only processes ``bond_orders`` that were generated with
+        the specified model. If ``False``, eventually falls back to any
+        ``bond_orders`` available for the structure. (default: True)
+
+    **Required Packages**
+      - SCINE: Database (present by default)
+      - SCINE: molassembler (present by default)
+      - SCINE: Utils (present by default)
+
+    **Generated Data**
+      No data will be generated, the graph fields of all input structures may
+      be modified and input structures may be relabeled as duplicates.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    @job_configuration_wrapper
+    def run(self, manager, calculation, config: Configuration) -> bool:
+        # Import required packages
+        import scine_database as db
+        import scine_molassembler as masm
+        import scine_utilities as utils
+
+        # Gather all required collections
+        structures = manager.get_collection("structures")
+        calculations = manager.get_collection("calculations")
+        properties = manager.get_collection("properties")
+
+        # Link calculation if needed
+        if not calculation.has_link():
+            calculation.link(calculations)
+
+        # Get first structure as ref_structure
+        input_structures = calculation.get_structures()
+        # Check if input_structures is not empty
+        if not input_structures:
+            calculation.set_raw_output("Missing structures in calculation.")
+            calculation.set_status(db.Status.FAILED)
+            return False
+        ref_structure = db.Structure(input_structures[0])
+        ref_structure.link(structures)
+
+        # Check if the ref_structure has a compound linked
+        if not ref_structure.has_compound():
+            calculation.set_raw_output("Missing compound for structure {}.".format(ref_structure.id().string()))
+            calculation.set_status(db.Status.FAILED)
+            return False
+        ref_compound_id = ref_structure.get_compound().string()
+
+        # Get model
+        model = calculation.get_model()
+
+        # Default settings
+        settings = {"use_distance_connectivity": True, "enforce_bond_order_model": True}
+        # Apply custom settings
+        custom_settings = calculation.get_settings()
+        for key, value in custom_settings.items():
+            if key not in settings.keys():
+                calculation.set_comment("Error: The key '{}' was not recognized.".format(key))
+                calculation.set_status(db.Status.FAILED)
+                return False
+            settings[key] = literal_eval(value)
+
+        with calculation_context(self):
+            # Query bond orders of the specified model
+            # Check for bond orders with the given model
+            bos = ref_structure.query_properties("bond_orders", model, properties)
+            if len(bos) == 0 and not settings["enforce_bond_order_model"]:
+                bos = ref_structure.get_properties("bond_orders")
+            if len(bos) == 0:
+                raise Exception("Deduplication Job Error: Missing bond orders.")
+
+            print("Interpreting from bond orders with property ID '{}'.".format(bos[0].string()))
+            db_bond_orders = db.SparseMatrixProperty(bos[0])
+            db_bond_orders.link(properties)
+            # Generate graph and decision lists and add them to structure
+            ref_atoms = ref_structure.get_atoms()
+            ref_bond_orders = utils.BondOrderCollection(len(ref_atoms))
+            ref_bond_orders.matrix = db_bond_orders.get_data()
+            masm_results = masm_helper.get_molecules_result(
+                ref_atoms, ref_bond_orders, settings, model.periodic_boundaries
+            )
+            if len(masm_results.molecules) > 1:
+                raise Exception("Expected a single molecule not a complex in deduplication.")
+
+            # Generate molassembler classes
+            masm.Options.Thermalization.disable()
+            alignment = masm.BondStereopermutator.Alignment.Staggered
+            generator = masm.DirectedConformerGenerator(masm_results.molecules[0], alignment)
+            relabeler = generator.relabeler()
+
+            # Add all structures for binning
+            dihedrals = []
+            for sid in input_structures:
+                s = db.Structure(sid)
+                s.link(structures)
+                if ref_compound_id != s.get_compound().string():
+                    raise Exception(
+                        "Structures {} and {} are of different compounds.".format(
+                            ref_structure.id().string(), sid.string()
+                        )
+                    )
+                dihedrals.append(relabeler.add(s.get_atoms().positions))
+
+            # Get bins and relabel all structures
+            bins = relabeler.bins()
+            # Check bins if they are not empty
+            if len(bins) == 0:
+                if ref_structure.get_label() == db.Label.DUPLICATE:
+                    raise Exception("Reference structure {} is a duplicate".format(ref_structure.id().string()))
+                for sid in input_structures[1:]:
+                    s = db.Structure(sid)
+                    s.link(structures)
+                    s.set_label(db.Label.DUPLICATE)
+                    s.set_comment("Structure is a duplicate of {:s}.".format(ref_structure.id().string()))
+            else:
+                bin_indices = relabeler.bin_indices(bins)
+                bin_bounds = relabeler.bin_bounds(bin_indices, bins)
+                uniques_decisions = []
+                uniques_structures = []
+                rerun = []
+                for sid, structure_bins, structure_dihedrals in zip(input_structures, bin_bounds, dihedrals):
+                    s = db.Structure(sid)
+                    s.link(structures)
+                    masm_decision_list = ":".join(
+                        [
+                            "(" + str(b[0]) + "," + str(int(0.5 + 180 * d / math.pi)) + "," + str(b[1]) + ")"
+                            for b, d in zip(structure_bins, structure_dihedrals)
+                        ]
+                    )
+                    s.set_graph("masm_decision_list", masm_decision_list)
+                    is_already_a_duplicate = bool(db.Label.DUPLICATE == s.get_label())
+                    if masm_decision_list in uniques_decisions:
+                        s.set_label(db.Label.DUPLICATE)
+                        idx = uniques_decisions.index(masm_decision_list)
+                        s.set_comment("Structure is a duplicate of {:s}.".format(uniques_structures[idx].string()))
+                    elif is_already_a_duplicate:
+                        rerun.append(masm_decision_list)
+                    else:
+                        uniques_decisions.append(masm_decision_list)
+                        uniques_structures.append(sid)
+
+                for masm_decision_list in rerun:
+                    if masm_decision_list not in uniques_decisions:
+                        raise Exception("Final deduplication results in redeclaration of intermediate duplicate.")
+
+        # After the calculation, verify that the connection to the database still exists
+        self.verify_connection()
+
+        # Capture raw output
+        stdout_path = os.path.join(self.work_dir, "output")
+        stderr_path = os.path.join(self.work_dir, "errors")
+        with open(stdout_path, "r") as stdout, open(stderr_path, "r") as stderr:
+            error = stderr.read()
+            calculation.set_raw_output(stdout.read() + "\n" + error)
+
+        if not os.path.exists(os.path.join(self.work_dir, "success")) or os.path.exists(
+            os.path.join(self.work_dir, "failed")
+        ):
+            if len(error.strip()) > 0:
+                calculation.set_comment(error.replace("\n", " "))
+            else:
+                calculation.set_comment(
+                    "Deduplication Job Error: Final conformer deduplication failed with an unspecified error."
+                )
+            calculation.set_status(db.Status.FAILED)
+            return False
+
+        # Generate database results
+        db_results = calculation.get_results()
+        db_results.clear()
+        calculation.set_results(db_results)
+        calculation.set_executor(config["daemon"]["uuid"])
+        calculation.set_status(db.Status.COMPLETE)
+        return True
+
+    @staticmethod
+    def required_programs():
+        return ["database", "utils", "molassembler"]

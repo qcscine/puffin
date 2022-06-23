@@ -1,0 +1,366 @@
+# -*- coding: utf-8 -*-
+__copyright__ = """ This code is licensed under the 3-clause BSD license.
+Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+See LICENSE.txt for details.
+"""
+
+import os
+import sys
+import scipy.sparse
+from scine_puffin.config import Configuration
+from ..templates.job import Job, calculation_context, job_configuration_wrapper
+
+try:
+    from rdkit import Chem
+except ImportError:
+    pass
+
+
+class RdkitConformers(Job):
+    """
+    A job generating a number of possible conformers (guesses) for a
+    given molecule with ``RDKit``.
+    The given model is used as a hint for quality of the bond orders that are to
+    be used when generating the ``RDKit`` molecule.
+
+    **Order Name**
+      ``rdkit_conformers``
+
+    **Optional Settings**
+      Optional settings are read from the ``settings`` field, which is part of
+      any ``Calculation`` stored in a SCINE Database.
+      Possible settings for this job are:
+
+      numConfs :: int
+         The number of conformers to be generated. By default it is 100.
+      maxAttempts :: int
+         The maximum number of trials that will be undertaken in order to
+         generate conformers.
+         By default it equals numConfs.
+      pruneRmsThresh :: float
+         If set, the heavy atom RMSD is calculated and the generated conformers
+         are pruned such that only those are kept that are at least
+         pruneRmsThresh away from all priorly retained conformations.
+         By default there is no pruning.
+      randomSeed :: int
+         Seed for the random number generator employed during conformer
+         generation. If set to -1 (default), the random number generator is not
+         seeded.
+
+      For details about RDKit's conformer generation algorithm see the
+      `RDKit documentation <https://www.rdkit.org/docs/>`_
+
+    **Required Packages**
+      - SCINE: Database (present by default)
+      - SCINE: Utils (present by default)
+      - RDKit: RDKit has to be present in the PYTHONPATH.
+
+      For information on how to install RDKit see the
+      `installation instructions <https://www.rdkit.org/docs/Install.html>`_
+
+    **Generated Data**
+      If successful the following data will be generated and added to the
+      database:
+
+      Structures
+        New conformer guess structures.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def required_programs():
+        return ["database", "utils", "rdkit"]
+
+    @job_configuration_wrapper
+    def run(self, manager, calculation, config: Configuration) -> bool:
+
+        import scine_database as db
+
+        # Gather the required collection
+        calculations = manager.get_collection("calculations")
+        # Link calculation if needed
+        if not calculation.has_link():
+            calculation.link(calculations)
+
+        # If the configuration file is changed to claiming that rdkit is present
+        #  in the python path but it is not and puffin accepts an RDKit job,
+        #  calculation is labelled as failed.
+        if "rdkit" not in sys.modules:
+            calculation.set_raw_output("RDKit not in python path.")
+            return False
+        else:
+            success = self.run_rdkit(manager, calculation, config)
+            # Set job status to failed if necessary
+            if not success:
+                calculation.set_status(db.Status.FAILED)
+            return success
+
+    # All other methods can only be defined and used if rdkit was imported
+    if "rdkit" in sys.modules:
+
+        def classify_bond(self, bond_order: float) -> Chem.rdchem.BondType:
+            """
+            Function to derive RDKit BondType from bond order.
+            Note that it only derives the simple bond types ZERO, SINGLE,
+            ONEANDAHALF etc. but not aromatic, ionic etc.
+            """
+            if bond_order < 0.5:
+                return Chem.rdchem.BondType.ZERO
+            elif bond_order >= 0.5 and bond_order <= 1.25:
+                return Chem.rdchem.BondType.SINGLE
+            elif bond_order > 1.25 and bond_order <= 1.75:
+                return Chem.rdchem.BondType.ONEANDAHALF
+            elif bond_order > 1.75 and bond_order <= 2.25:
+                return Chem.rdchem.BondType.DOUBLE
+            elif bond_order > 2.25 and bond_order <= 2.75:
+                return Chem.rdchem.BondType.TWOANDAHALF
+            elif bond_order >= 2.75 and bond_order <= 3.25:
+                return Chem.rdchem.BondType.TRIPLE
+            else:
+                return Chem.rdchem.BondType.UNSPECIFIED
+
+        def set_partial_charges(self, mol: Chem.rdchem.Mol) -> None:
+            """
+            Set partial charges in an RDKit Molecule as derived from its valence.
+            This code was written in analogy to the corresponding implementation
+            in the old Chemoton version.
+            """
+
+            for i in range(mol.GetNumAtoms()):
+                atom = mol.GetAtomWithIdx(i)
+                atom.UpdatePropertyCache()
+                explicit_valence = atom.GetExplicitValence()
+                # Get maximum valence of the atom
+                valences = Chem.PeriodicTable.GetValenceList(Chem.GetPeriodicTable(), atom.GetAtomicNum())
+                max_valence = max(valences)
+
+                subtract = False
+                # Compute effective valence based on the atom's position in the PES
+                if Chem.PeriodicTable.GetNOuterElecs(Chem.GetPeriodicTable(), atom.GetAtomicNum()) >= 4:
+                    subtract = True
+                    effective_valence = explicit_valence - atom.GetFormalCharge()
+                else:
+                    subtract = False
+                    effective_valence = explicit_valence + atom.GetFormalCharge()
+                # Correction if calculate effective valence is bigger than the maximum allowed
+                if max_valence > 0 and effective_valence > max_valence:
+                    surplus_valence = effective_valence - max_valence
+                    correction = surplus_valence
+                    if subtract:
+                        correction *= -1
+                    atom.SetFormalCharge(atom.GetFormalCharge - correction)
+            return
+
+        def add_coordinates(self, mol: Chem.rdchem.Mol, atom_collection) -> None:
+            """
+            Adds positions from atom collection to RDKit Molecule's first conformer
+            """
+            import scine_utilities as utils
+
+            conformer = Chem.Conformer(mol.GetNumAtoms())
+            for i in range(mol.GetNumAtoms()):
+                # RdKit stores positions in Angstroms
+                conformer.SetAtomPosition(i, atom_collection.get_position(i) * utils.ANGSTROM_PER_BOHR)
+            conformer.Set3D(True)
+            mol.AddConformer(conformer)
+            return
+
+        def run_rdkit(self, manager, calculation, config: Configuration) -> bool:
+            """
+            Carries out conformer generation with rdkit.
+            """
+            import scine_database as db
+            import scine_utilities as utils
+
+            # Gather all required collections
+            structures = manager.get_collection("structures")
+            calculations = manager.get_collection("calculations")
+            properties = manager.get_collection("properties")
+
+            # Link calculation if needed
+            if not calculation.has_link():
+                calculation.link(calculations)
+
+            # Get structure
+            structure = db.Structure(calculation.get_structures()[0])
+            structure.link(structures)
+            charge = structure.get_charge()
+            multiplicity = structure.get_multiplicity()
+            atoms = structure.get_atoms()
+
+            # Get model
+            model = calculation.get_model()
+
+            # Get settings
+            settings = calculation.get_settings()
+
+            # Check for bond orders with the given model
+            bos = structure.query_properties("bond_orders", model, properties)
+            if len(bos) > 0:
+                db_bond_orders = db.SparseMatrixProperty(bos[0])
+                db_bond_orders.link(properties)
+            # Fall back to any set of bond orders present
+            else:
+                bos = structure.get_properties("bond_orders")
+                if len(bos) > 0:
+                    db_bond_orders = db.SparseMatrixProperty(bos[0])
+                    db_bond_orders.link(properties)
+                # Fail if there are no bond orders
+                else:
+                    calculation.set_raw_output("Missing bond orders.")
+                    return False
+
+            # Check if the structure has a compound linked
+            if structure.has_compound():
+                compounds = manager.get_collection("compounds")
+                compound = db.Compound(structure.get_compound())
+                compound.link(compounds)
+            else:
+                compound = False
+
+            # Generate database results
+            db_results = calculation.get_results()
+            db_results.clear()
+            result_model = db.Model("guess", "", "")
+            result_model.program = "rdkit"
+
+            debug = bool(config["daemon"]["mode"] == "debug")
+            with calculation_context(self._work_dir, "output", "errors", debug=debug):
+
+                bond_orders = utils.BondOrderCollection(len(atoms))
+                bond_orders.matrix = db_bond_orders.get_data()
+
+                # Generate RDKit molecule from database information
+                mol = Chem.rdchem.Mol()
+                # Generate editable rdkit molecule
+                edit_mol = Chem.EditableMol(mol)
+
+                # Add atoms
+                element_list = atoms.elements
+                for element in element_list:
+                    # Generate RDKit Atom
+                    atom = Chem.rdchem.Atom(str(element))
+                    # Do not allow implicit hydrogens being added by RDKit
+                    atom.SetNoImplicit(True)
+                    # Add atom to editable molecule
+                    edit_mol.AddAtom(atom)
+                # Add bonds
+                coo_bonds = scipy.sparse.triu(bond_orders.matrix, format="coo")
+                for first_atom, second_atom, order in zip(coo_bonds.row, coo_bonds.col, coo_bonds.data):
+                    bond_type = self.classify_bond(order)
+                    if bond_type == Chem.rdchem.BondType.UNSPECIFIED:
+                        calculation.set_raw_output(
+                            "Cannot classify bond order %.2f between atoms %d and %d."
+                            % (order, int(first_atom), int(second_atom))
+                        )
+                        return False
+                    elif bond_type != Chem.rdchem.BondType.ZERO:
+                        edit_mol.AddBond(int(first_atom), int(second_atom), bond_type)
+
+                mol = edit_mol.GetMol()
+
+                # Set partial charges derived from valence
+                self.set_partial_charges(mol)
+
+                # Sanitize molecule (w.r.t. to all aspects by default)
+                sanitization_error = Chem.SanitizeMol(mol, catchErrors=True)
+
+                if sanitization_error != 0:
+                    calculation.set_raw_output("First RDKit sanitize failed with error: %s" % sanitization_error)
+                    return False
+
+                # Add coordinates
+                self.add_coordinates(mol, atoms)
+
+                # Set stereochemisty (assigns the stereochemistry of the molecule based on a conformers 3D structure)
+                Chem.rdmolops.AssignStereochemistryFrom3D(mol)
+
+                # Sanitize again
+                sanitization_error = Chem.SanitizeMol(mol, catchErrors=True)
+
+                if sanitization_error != 0:
+                    calculation.set_raw_output(
+                        "Second (post stereochemistry assignment) RDKit sanitize failed with error: %s"
+                        % sanitization_error
+                    )
+                    return False
+
+                # Generate conformers with RDKit's ETKDG method
+
+                # Check that mol is only one molecule
+                frag_count = len(Chem.rdmolops.GetMolFrags(mol))
+                if frag_count > 1:
+                    calculation.set_raw_output("Too many molecules, expected only one.")
+                    return False
+
+                # Extract settings
+                if "numConfs" in settings:
+                    n_confs = int(settings["numConfs"])
+                else:
+                    n_confs = 100
+                if "maxAttempts" in settings:
+                    n_trials = int(settings["maxAttempts"])
+                else:
+                    n_trials = n_confs
+
+                # A seed for the random number generator can be provided in the settings.
+                # This allows for reproducible results of the conformer generation.
+                # With -1 the random number generator is not seeded.
+                if "randomSeed" in settings:
+                    seed = int(settings["randomSeed"])
+                else:
+                    seed = -1
+
+                # Apply an RMSD threshold and only keep conformers with a heavy
+                # atom RMSD of more than threshold to the first one
+                # By default all conformers are kept
+                if "pruneRmsThresh" in settings:
+                    rmsd_threshold = float(settings["pruneRmsThresh"]) * utils.ANGSTROM_PER_BOHR
+                else:
+                    rmsd_threshold = -1
+
+                _ = Chem.AllChem.EmbedMultipleConfs(
+                    mol,
+                    numConfs=n_confs,
+                    maxAttempts=n_trials,
+                    enforceChirality=True,
+                    randomSeed=seed,
+                    pruneRmsThresh=rmsd_threshold,
+                )
+
+            # After the calculation, verify that the connection to the database still exists
+            self.verify_connection()
+
+            # Capture raw output
+            stdout_path = os.path.join(self._work_dir, "output")
+            stderr_path = os.path.join(self._work_dir, "errors")
+            with open(stdout_path, "r") as stdout, open(stderr_path, "r") as stderr:
+                error = stderr.read()
+                calculation.set_raw_output(stdout.read() + "\n" + error)
+
+            if not os.path.exists(os.path.join(self._work_dir, "success")):
+                if len(error.strip()) > 0:
+                    calculation.set_comment(error.replace("\n", " "))
+                else:
+                    calculation.set_comment("RDKit Conformer job failed with an unspecified error.")
+                calculation.set_status(db.Status.FAILED)
+                return False
+
+            # Get conformer positions and write results to databases
+            for conf in mol.GetConformers():
+                atoms.positions = utils.BOHR_PER_ANGSTROM * conf.GetPositions()
+                new_structure = db.Structure()
+                new_structure.link(structures)
+                new_id = new_structure.create(atoms, charge, multiplicity, result_model, db.Label.MINIMUM_GUESS)
+                db_results.add_structure(new_id)
+                # If the structure has a compound add the new conformer
+                if compound:
+                    compound.add_structure(new_id)
+
+            calculation.set_results(db_results)
+            calculation.set_executor(config["daemon"]["uuid"])
+            calculation.set_status(db.Status.COMPLETE)
+
+            return True

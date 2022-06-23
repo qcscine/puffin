@@ -1,0 +1,110 @@
+Bootstrap: docker
+From: ubuntu:focal
+
+%setup
+    mkdir -p /root/.ssh/
+
+%files
+    /home/$USER/.ssh/id_rsa /root/.ssh/id_rsa
+    /home/$USER/.ssh/known_hosts /root/.ssh/known_hosts
+
+%environment
+    export LC_ALL=C
+    export TMPDIR=/jobs
+    export PUFFIN_DAEMON_JOB_DIR=/jobs
+    export PUFFIN_DAEMON_LOG=/socket/puffin.log
+    export PUFFIN_DAEMON_PID=/socket/puffin.pid
+    export PUFFIN_DAEMON_STOP=/socket/puffin.stop
+    export PUFFIN_PROGRAMS_XTB_AVAILABLE=true
+
+%post
+    cd /root
+    chmod 600 .ssh/id_rsa
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -y update
+    apt-get -y install wget libssl-dev make cmake gcc git vim libeigen3-dev python3-pip libboost-all-dev libhdf5-dev libxml2-dev libpciaccess-dev libopenblas-dev liblapack-dev python3-pybind11
+    pip3 install --upgrade pip
+
+    #########
+    #  MKL  #
+    #########
+
+    wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB -O - | apt-key add -
+    echo "deb https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list
+    apt-get -y update
+    apt-get -y install intel-oneapi-mkl intel-oneapi-mkl-devel
+    ln -r -s /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx2.so.2 /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx2.so
+    ln -r -s /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_avx2.so.2 /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_avx2.so
+    export LD_LIBRARY_PATH=/opt/intel/oneapi/mkl/latest/lib/intel64:$LD_LIBRARY_PATH
+    export MKLROOT=/opt/intel/oneapi/mkl/latest
+    echo 'export LD_LIBRARY_PATH=/opt/intel/oneapi/mkl/latest/lib/intel64:$LD_LIBRARY_PATH' >>$SINGULARITY_ENVIRONMENT
+    echo 'export MKLROOT=/opt/intel/oneapi/mkl/latest' >>$SINGULARITY_ENVIRONMENT
+
+    # Install Cython
+    pip3 install Cython pythran
+
+    # Install numpy
+    git clone https://github.com/numpy/numpy.git numpy
+    cd numpy
+    git submodule update --init
+    cp site.cfg.example site.cfg
+    echo "\n[mkl]" >> site.cfg
+    echo "include_dirs = /opt/intel/oneapi/mkl/latest/lib/intel64/" >> site.cfg
+    echo "library_dirs = /opt/intel/oneapi/mkl/latest/lib/intel64/" >> site.cfg
+    echo "mkl_libs = mkl_rt" >> site.cfg
+    echo "lapack_libs =" >> site.cfg
+    python3 setup.py build --fcompiler=gnu95
+    python3 setup.py install
+    cd ..
+    rm -rf numpy
+
+    # Install scipy
+    git clone https://github.com/scipy/scipy.git scipy
+    cd scipy
+    git submodule update --init
+    python3 setup.py build
+    python3 setup.py install
+    cd ..
+    rm -rf scipy
+
+    ############
+    #  Mongodb #
+    ############
+
+    wget https://github.com/mongodb/mongo-c-driver/releases/download/1.17.3/mongo-c-driver-1.17.3.tar.gz
+    tar -xzf mongo-c-driver-1.17.3.tar.gz
+    cd mongo-c-driver-1.17.3
+    mkdir cmake-build
+    cd cmake-build
+    cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_AUTOMATIC_INIT_AND_CLEANUP=OFF -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_PREFIX_PATH=/usr ..
+    make install
+    cd ../..
+
+    wget https://github.com/mongodb/mongo-cxx-driver/archive/r3.6.2.tar.gz
+    tar -xzf r3.6.2.tar.gz
+    cd mongo-cxx-driver-r3.6.2/build
+    cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_VERSION=3.6.2 -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_PREFIX_PATH=/usr ..
+    make install
+    cd ../..
+
+    ############
+    #  Puffin  #
+    ############
+
+    git clone https://github.com/qcscine/puffin.git
+    cd puffin
+    pip3 install .
+    cd ..
+
+    export PUFFIN_PROGRAMS_XTB_AVAILABLE=true
+    python3 -m scine_puffin bootstrap
+    mv puffin.sh /scratch/puffin.sh
+    chmod u+x /scratch/puffin.sh
+    cat /scratch/puffin.sh >>$SINGULARITY_ENVIRONMENT
+
+    rm /root/.ssh/id_rsa
+    rm /root/.ssh/known_hosts
+
+%runscript
+    /bin/bash -c "python3 -m scine_puffin container"
