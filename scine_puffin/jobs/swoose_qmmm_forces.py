@@ -45,9 +45,6 @@ class SwooseQmmmForces(Job):
         The ``atomic_forces`` associated with the given structure.
     """
 
-    def __init__(self):
-        super().__init__()
-
     def write_parameter_and_connectivity_file(self, parameter_file: str, connectivity_file: str,
                                               settings, structure, properties):
         """
@@ -59,8 +56,8 @@ class SwooseQmmmForces(Job):
         try:
             parameters = db.StringProperty(structure.get_property('sfam_parameters'))
             bond_orders = db.SparseMatrixProperty(structure.get_property('bond_orders'))
-        except RuntimeError:
-            raise RuntimeError('Parameters or bond orders are missing as properties of the structure.')
+        except RuntimeError as e:
+            raise RuntimeError('Parameters or bond orders are missing as properties of the structure.') from e
         parameters.link(properties)
         bond_orders.link(properties)
         n_atoms = len(structure.get_atoms())

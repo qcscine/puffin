@@ -27,4 +27,5 @@ from members of the Reiher research group.
 Further Contributors
 --------------------
 
-So far, no one else has contributed to this repository.
+- Sebastian Ehlert (`@awvwgk <https://github.com/awvwgk>`_), University of Bonn
+  (https://github.com/qcscine/puffin/issues/2)

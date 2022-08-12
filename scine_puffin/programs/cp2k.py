@@ -16,10 +16,7 @@ class Cp2k(Program):
     Setup of the CP2K program
     """
 
-    def __init__(self, settings: dict):
-        super().__init__(settings)
-
-    def install(self, build_dir: str, install_dir: str, ncores: int):
+    def install(self, repo_dir: str, install_dir: str, ncores: int):
         if self.root:
             pass
         elif self.source:
@@ -30,9 +27,9 @@ class Cp2k(Program):
     def check_install(self):
         raise NotImplementedError
 
-    def setup_environment(self, config: Configuration, env: dict, executables: dict):
+    def setup_environment(self, config: Configuration, env_paths: dict, env_vars: dict):
         if self.root:
-            executables["CP2K_BINARY_PATH"] = os.path.join(self.root)  # direct path to bin because of multiple bins
+            env_vars["CP2K_BINARY_PATH"] = os.path.join(self.root)  # direct path to bin because of multiple bins
         elif self.source:
             pass
         else:

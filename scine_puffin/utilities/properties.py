@@ -8,7 +8,7 @@ import numpy as np
 import scine_utilities as utils
 
 
-def single_particle_energy_to_matrix(x: utils.SingleParticleEnergies) -> np.array:
+def single_particle_energy_to_matrix(x: utils.SingleParticleEnergies) -> np.ndarray:
     """
     Converts datatype `utils.SingleParticleEnergies` to `np.array`.
     In the restricted case, there is only one column, in the unrestricted case,
@@ -26,16 +26,16 @@ def single_particle_energy_to_matrix(x: utils.SingleParticleEnergies) -> np.arra
     return np.array([x.alpha, x.beta])
 
 
-def single_particle_energy_from_matrix(x: np.array) -> utils.SingleParticleEnergies:
+def single_particle_energy_from_matrix(x: np.ndarray) -> utils.SingleParticleEnergies:
     """
-    Converts datatype `np.array` to `SingleParticleEnergies`.
+    Converts datatype `np.ndarray` to `SingleParticleEnergies`.
     If the first dimension of the numpy array is 1, there is only one column of
     energies, indicating the restricted case.
     Otherwise, for two columns, we're in the unrestricted case.
 
     Parameters
     ----------
-    x :: np.array
+    x :: np.ndarray
         The array of dimension $1 \times N$ for the restricted case or $2
         \times N$ for the unrestricted case, where $N$ is the number energies.
     """

@@ -1,6 +1,30 @@
 Changelog
 =========
 
+Release 1.1.0
+-------------
+
+New Features:
+ - Support for stable intermediate complexes and barrier-less reactions
+    - Strongly interacting complexes containing multiple structures
+      are now saved in the database.
+    - Spontaneous barrier-less associations detected during reaction probing
+      are now considered barrier-less reactions.
+    - Uphill barrier-less dissociations may be probed.
+    - All structures visited during reaction probing may be saved in the
+      database if required.
+
+New Jobs:
+ - Open source (SCINE-based) jobs
+    - Elementary step refinement starting from a previously optimized transition state
+    - Conceptual DFT property calculation
+    - QM/MM force calculation
+    - Barrier-less dissociation probing
+
+ - New interfaced programs
+    - SCINE Swoose
+
+
 Release 1.0.0
 -------------
 

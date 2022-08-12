@@ -45,7 +45,6 @@ setup(
     author_email="scine@phys.chem.ethz.ch",
     description="Calculation handler for SCINE Chemoton",
     long_description=readme,
-    long_description_content_type="text/markdown",
     url="https://www.scine.ethz.ch",
     python_requires=">={}".format(".".join(str(n) for n in min_version)),
     packages=find_packages(exclude=["docs", "tests"]),

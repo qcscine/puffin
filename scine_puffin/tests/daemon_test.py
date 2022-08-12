@@ -33,7 +33,7 @@ class ValidJobClasses(unittest.TestCase):
         import scine_puffin.jobs
 
         for path in scine_puffin.jobs.__path__:
-            for root, dirs, files in os.walk(path):
+            for _, dirs, files in os.walk(path):
                 for name in files:
                     if name.endswith(".py") and name != "__init__.py" and "templates" in dirs and "deprecated" in dirs:
                         all_jobs.append(name[:-3])

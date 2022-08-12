@@ -7,6 +7,7 @@ See LICENSE.txt for details.
 
 # Standard library imports
 import os
+from typing import Optional
 
 
 def get_test_db_credentials(name: str = "puffin_unittests"):
@@ -94,7 +95,7 @@ def add_structure(manager, xyz_path, label, charge: int = 0, multiplicity: int =
     return structure
 
 
-def add_calculation(manager, model, job, structures, settings: dict = {}):
+def add_calculation(manager, model, job, structures, settings: Optional[dict] = None):
     """
     Generates a Calculation in the database according to the
     specifications given as arguments.
@@ -120,6 +121,9 @@ def add_calculation(manager, model, job, structures, settings: dict = {}):
     """
     import scine_database as db
     import scine_utilities as utils
+
+    if settings is None:
+        settings = {}
     calculations = manager.get_collection("calculations")
     calculation = db.Calculation.make(model, job, structures, calculations)
     calculation.set_settings(utils.ValueCollection(settings))
@@ -150,3 +154,56 @@ def add_compound_and_structure(manager, xyz_file: str = "proline_acid.xyz"):
     new_compound = db.Compound.make([structure.id()], compounds)
     structure.set_compound(new_compound.id())
     return new_compound
+
+
+def add_flask_and_structure(manager, xyz_file: str = "proline_acid.xyz"):
+    """
+    Generates a Flask with one structure according to the given xyz_file.
+
+    Parameters
+    ----------
+    manager :: db.Manager
+        The manager of the database to create data in.
+    xyz_file :: str
+        The xyz file name for the structure that is added
+    Returns
+    -------
+    flask :: db.Flask
+        The Flask.
+    """
+    import scine_database as db
+    from .resources import resource_path
+    flasks = manager.get_collection("flasks")
+    path = os.path.join(resource_path(), xyz_file)
+    structure = add_structure(manager, path, db.Label.COMPLEX_OPTIMIZED)
+    new_flask = db.Flask.make([structure.id()], [], flasks)
+    structure.set_compound(new_flask.id())
+    return new_flask
+
+
+def add_reaction(manager, lhs_compound_ids, rhs_compound_ids):
+    """
+    Generates a Reaction without any elementary steps.
+
+    Parameters
+    ----------
+    manager :: db.Manager
+        The manager of the database to create data in.
+    lhs_compound_ids :: List[db.ID]
+        The left-hand side of the reaction.
+    rhs_compound_ids :: List[db.ID]
+        The right-hand side of the reaction.
+    Returns
+    -------
+    compound :: db.Compound
+        The Reaction.
+    """
+    import scine_database as db
+    reactions = manager.get_collection("reactions")
+    compounds = manager.get_collection("compounds")
+    new_reaction = db.Reaction.make(lhs_compound_ids, rhs_compound_ids, reactions)
+    c_ids = lhs_compound_ids + rhs_compound_ids
+    for c_id in c_ids:
+        compound = db.Compound(c_id, compounds)
+        compound.add_reaction(new_reaction.id())
+    return new_reaction

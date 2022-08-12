@@ -38,7 +38,7 @@ def _skip(func: Callable, error: str):
 
 def dependency_addition(dependencies: List[str]) -> List[str]:
     # allow to give scine packages without 'scine_' prefix
-    short_terms = ['readuct', 'swoose', 'sparrow', 'molassembler', 'database', 'utilities']
+    short_terms = ['readuct', 'swoose', 'sparrow', 'molassembler', 'database', 'utilities', 'kinetx', 'xtb_wrapper']
     dependencies = ['scine_' + d if d in short_terms else d for d in dependencies]
     # dependencies of key as value list, only utilities must not be included
     dependency_data = {
@@ -54,19 +54,17 @@ def dependency_addition(dependencies: List[str]) -> List[str]:
 
 
 def skip_without(*dependencies) -> Callable:
-    if len(dependencies) == 1 and isinstance(dependencies[0], list):
-        # allow to give multiple arguments or single argument list
-        dependencies = dependencies[0]
-    dependencies = dependency_addition(dependencies)
+    dependency_list: List[str] = list(dependencies)
+    dependency_list = dependency_addition(dependency_list)
 
     def wrap(f: Callable):
-        if all(module_exists(d) for d in dependencies):
+        if all(module_exists(d) for d in dependency_list):
             @wraps(f)
             def wrapped_f(*args, **kwargs):
                 f(*args, **kwargs)
             return wrapped_f
         else:
-            return _skip(f, "Test requires {:s}".format([d for d in dependencies if not module_exists(d)][0]))
+            return _skip(f, "Test requires {:s}".format([d for d in dependency_list if not module_exists(d)][0]))
 
     return wrap
 

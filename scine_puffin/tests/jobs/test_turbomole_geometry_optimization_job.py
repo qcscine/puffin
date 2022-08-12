@@ -22,9 +22,6 @@ from ..resources import resource_path
 
 class TurbomoleGeometryOptimizationJobTest(JobTestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @skip_without('database', 'turbomole')
     def test_energy(self):
         # import Job

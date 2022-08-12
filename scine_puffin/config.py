@@ -9,9 +9,11 @@ import os
 import uuid
 import yaml
 from functools import reduce
+from copy import deepcopy
+from typing import Any, Dict, List, Optional
 
 
-def dict_generator(indict: dict, pre: dict = None):
+def dict_generator(indict: Dict[str, Any], pre: Optional[List[str]] = None):
     """
     A small helper function/generator recursively generating all chains of keys
     for a given dictionary.
@@ -21,15 +23,15 @@ def dict_generator(indict: dict, pre: dict = None):
     indict :: dict
         The dictionary to traverse.
     pre :: dict
-        The the parent dictionary (used for recursion).
+        The parent dictionary (used for recursion).
 
     Yields
-    -------
+    ------
     key_chain :: List[str]
         A list of keys from top level to bottom level for each end in the tree
         of possible value fields in the given dictionary.
     """
-    pre = pre[:] if pre else []
+    pre = deepcopy(pre) if pre is not None else []
     if isinstance(indict, dict):
         for key, value in indict.items():
             if isinstance(value, dict):
@@ -317,6 +319,15 @@ class Configuration:
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
             },
+            "kinetx": {
+                "available": False,
+                "source": "https://github.com/qcscine/kinetx.git",
+                "root": "",
+                "version": "master",
+                "march": "native",
+                "cxx_compiler_flags": "",
+                "cmake_flags": "",
+            },
         }
 
     def __getitem__(self, key: str) -> dict:
@@ -442,18 +453,19 @@ class Configuration:
             if key in env:
                 try:
                     current_value = reduce(operator.getitem, key_chain, self._data)
-                except Exception:
-                    raise KeyError("The environment variable '{}' does not " "translate to a valid option.".format(key))
+                except BaseException as e:
+                    raise KeyError("The environment variable '{}' does not translate to a valid option.".format(key)) \
+                        from e
                 try:
                     if isinstance(current_value, bool):
                         value = env[key].lower() in ["true", "1"]
                     else:
                         value = type(current_value)(env[key])
-                except Exception:
+                except BaseException as e:
                     raise KeyError(
                         "The environment variable '{}' can not be translated "
                         "into the correct variable type.".format(key)
-                    )
+                    ) from e
                 reduce(operator.getitem, key_chain[:-1], self._data)[key_chain[-1]] = value
 
         # Generate uuid if none exists

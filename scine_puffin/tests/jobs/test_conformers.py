@@ -22,9 +22,6 @@ from ..resources import resource_path
 
 class ConformersJobTest(JobTestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @skip_without('database', 'molassembler')
     def test_butane(self):
         from scine_puffin.jobs.conformers import Conformers
@@ -65,6 +62,7 @@ class ConformersJobTest(JobTestCase):
             assert struct.get_graph("masm_cbor_graph") == "fakingagraph"
             assert struct.has_graph("masm_decision_list")
             assert struct.get_label() == db.Label.MINIMUM_GUESS
+            assert len(struct.get_graph("masm_decision_list").split()) == 4
 
     @skip_without('database', 'molassembler')
     def test_missing_bond_orders(self):

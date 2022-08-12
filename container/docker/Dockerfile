@@ -67,7 +67,6 @@ RUN cd mongo-cxx-driver-r3.6.2/build ; cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_
 RUN cd mongo-cxx-driver-r3.6.2/build ; make install
 
 # Install Puffin
-# TODO change url
 RUN git clone https://github.com/qcscine/puffin.git
 RUN cd puffin ; pip3 install .
 
@@ -76,5 +75,7 @@ ENV PUFFIN_PROGRAMS_XTB_AVAILABLE=true
 RUN python3 -m scine_puffin bootstrap
 RUN mv puffin.sh /scratch/puffin.sh
 RUN chmod u+x /scratch/puffin.sh
+
+#ENV PATH="/opt/gtk/bin:${PATH}"
 
 ENTRYPOINT source ./puffin.sh ; python3 -m scine_puffin container

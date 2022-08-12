@@ -5,7 +5,7 @@ Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
 See LICENSE.txt for details.
 """
 
-from typing import Tuple, Union
+from typing import Any, Dict, Tuple, Union
 import scine_database as db
 import scine_utilities as utils
 
@@ -15,7 +15,7 @@ class ProgramHelper:
     A common interface for all helper classes for specific Scine calculators
     """
 
-    def __init__(self):
+    def __init__(self, *arg, **kwargs):
         self.helper_settings = []
 
     @staticmethod
@@ -26,8 +26,9 @@ class ProgramHelper:
         """
         raise NotImplementedError
 
-    @staticmethod
+    @classmethod
     def get_correct_helper(
+        cls,
         program: str,
         manager: db.Manager,
         structure: db.Structure,
@@ -47,7 +48,7 @@ class ProgramHelper:
         calculation :: db.Calculation (Scine::Database::Calculation)
             The calculation that is carried out in the current job.
         """
-        for Child in ProgramHelper.__subclasses__()[1:]:  # parent is first element
+        for Child in cls.__subclasses__()[1:]:  # parent is first element
             if Child.program().lower() == program.lower():
                 return Child(manager, structure, calculation)
         return None
@@ -108,7 +109,7 @@ class Cp2kHelper(ProgramHelper):
         self.compounds = manager.get_collection("compounds")
         self.properties = manager.get_collection("properties")
         self.cutoff_optimization_necessary = False
-        self.cutoff_optimization_settings = {}
+        self.cutoff_optimization_settings: Dict[str, Any] = {}
         settings = calculation.get_settings()
         self.cutoff_handling(structure, settings)
         self.extract_cutoff_optimization_settings(settings)

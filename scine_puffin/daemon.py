@@ -12,15 +12,15 @@ from .config import Configuration
 from .jobloop import check_setup, loop, slow_connect
 
 
-def shutdown(signum, frame):
+def shutdown(_signum, _frame):
     """
     A small helper function triggering the stop of the process.
 
     Parameters
     ----------
-    signum :: int
+    _signum :: int
         Dummy variable to match the signal dependent function signature.
-    frame
+    _frame
         Dummy variable to match the signal dependent function signature.
     """
     sys.exit(0)
@@ -56,8 +56,12 @@ def start_daemon(config: Configuration):
     config :: scine_puffin.config.Configuration
         The current configuration of the Puffin.
     """
-    # set OMP_NUM_THREADS according to puffin's cores to avoid overuse
-    os.environ["OMP_NUM_THREADS"] = str(config["resources"]["cores"])
+    if "OMP_NUM_THREADS" in os.environ:
+        if os.environ["OMP_NUM_THREADS"] != str(config["resources"]["cores"]):
+            raise RuntimeError("Environment variable OMP_NUM_THREADS must "
+                               "match configured number of cores.")
+    else:
+        os.environ["OMP_NUM_THREADS"] = str(config["resources"]["cores"])
 
     # Ensure existence of the directory for job files
     job_dir = config["daemon"]["job_dir"]

@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 import glob
-from typing import Tuple
+from typing import Any, List, Tuple
 from scine_puffin.config import Configuration
 from .templates.job import Job, calculation_context, job_configuration_wrapper
 
@@ -139,11 +139,11 @@ class OrcaGeometryOptimization(Job):
                 )
             )
 
-    def parse_output_file(self) -> Tuple[object, float, list]:
+    def parse_output_file(self) -> Tuple[Any, float, list]:
         import scine_utilities as utils
 
         successful = False
-        atomic_charges = []
+        atomic_charges: List[float] = []
         with open(self.output_file, "r") as out:
             lines = out.readlines()
             for line_index, line in enumerate(lines):
@@ -168,7 +168,7 @@ class OrcaGeometryOptimization(Job):
                         atomic_charges.append(float(charge))
                         current_line_index += 1
         if successful:
-            optimized_structure, bonds = utils.io.read(self.output_structure)
+            optimized_structure, _ = utils.io.read(self.output_structure)
             return optimized_structure, float(optimized_energy), atomic_charges
         else:
             raise RuntimeError
@@ -271,8 +271,8 @@ class OrcaGeometryOptimization(Job):
             calculation.set_status(db.Status.FAILED)
             # Clean up .tmp files
             tmp_files = glob.glob(os.path.join(self.work_dir, "*.tmp"))
-            for f in tmp_files:
-                os.remove(f)
+            for f in tmp_files:  # type: ignore
+                os.remove(str(f))
             return False
 
         # A sanity check for the optimized structure

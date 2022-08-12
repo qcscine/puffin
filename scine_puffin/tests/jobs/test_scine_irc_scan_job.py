@@ -22,9 +22,6 @@ from ..resources import resource_path
 
 class ScineIrcScanJobTest(JobTestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @skip_without('database', 'readuct')
     def test_correct_stop_on_error_fail(self):
         # import Job

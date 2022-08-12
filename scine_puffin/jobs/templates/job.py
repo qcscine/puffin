@@ -6,7 +6,7 @@ See LICENSE.txt for details.
 
 from contextlib import contextmanager
 from functools import wraps
-from typing import Callable, List, Tuple, Union
+from typing import Callable, List, Optional, Tuple
 import shutil
 import tarfile
 import os
@@ -36,7 +36,7 @@ def job_configuration_wrapper(run: Callable):
         self.configure_run(manager, calculation, config)
         try:
             success = run(self, manager, calculation, config)
-        except Exception as e:
+        except BaseException as e:
             # this should not happen in a properly written run function, but added here for additional safety
             comment = calculation.get_comment()
             comment += "\n" + str(e)
@@ -71,6 +71,7 @@ class Job:
         self._properties = None
         self._reactions = None
         self._structures = None
+        self._flasks = None
 
     @job_configuration_wrapper
     def run(self, manager, calculation, config: Configuration) -> bool:
@@ -301,6 +302,7 @@ class Job:
         self._properties = manager.get_collection("properties")
         self._reactions = manager.get_collection("reactions")
         self._structures = manager.get_collection("structures")
+        self._flasks = manager.get_collection("flasks")
 
     def set_calculation(self, calculation):
         """
@@ -379,20 +381,20 @@ class Job:
             self.complete_job()
             return True
 
-    def failed_file(self) -> Union[str, None]:
+    def failed_file(self) -> str:
         """
         Returns the path to the file indicating a failed calculation, None if job has not been prepared
         """
         if self.work_dir is None:
-            return None
+            return ""
         return os.path.join(self.work_dir, "failed")
 
-    def success_file(self) -> Union[str, None]:
+    def success_file(self) -> str:
         """
-        Returns the path to the file indicating a successful calculation, None if job has not been prepared
+        Returns the path to the file indicating a successful calculation, empty string if job has not been prepared
         """
         if self.work_dir is None:
-            return None
+            return ""
         return os.path.join(self.work_dir, "success")
 
 
@@ -457,7 +459,7 @@ class TurbomoleJob(Job):
 
 
 @contextmanager
-def calculation_context(job: Job, stdout_name="output", stderr_name="errors", debug: Union[bool, None] = None):
+def calculation_context(job: Job, stdout_name="output", stderr_name="errors", debug: Optional[bool] = None):
     """
     A context manager for a types of calculations that are run externally and
     may fail, dump large amounts of files or do other nasty things.
@@ -560,7 +562,7 @@ def calculation_context(job: Job, stdout_name="output", stderr_name="errors", de
         except breakable.Break:
             with open(job.success_file(), "w"):
                 pass
-        except Exception as err:
+        except BaseException as err:
             with open(job.failed_file(), "w"):
                 pass
             with open(job.stderr_path, "a") as stderr:

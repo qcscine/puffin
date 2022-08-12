@@ -11,9 +11,10 @@ import time
 import ctypes
 import multiprocessing
 import random
+import traceback
 from datetime import datetime, timedelta
 from importlib import import_module, util
-from typing import Dict
+from typing import Dict, List
 from json import dumps
 from .config import Configuration
 
@@ -64,7 +65,7 @@ def slow_connect(manager, config: Configuration) -> None:
                                                         name))
     manager.set_credentials(credentials)
     # Allow 30 to 60 seconds to try and connect to the database
-    for connection_timeout in range(30):
+    for _ in range(30):
         try:
             manager.connect()
             break
@@ -142,7 +143,7 @@ def loop(config: Configuration, available_jobs: dict) -> None:
     CURRENT_DB.value = manager.get_database_name().encode("utf-8")
 
     # Run the loop in a second process
-    PROCESS = multiprocessing.Process(
+    PROCESS = multiprocessing.Process(  # pylint: disable=redefined-outer-name
         target=_loop_impl,
         args=(),
         kwargs={
@@ -353,8 +354,8 @@ def _loop_impl(
 
     # Initialize cache for failure checks
     previously_failed_job_count = 0
-    previously_failed_jobs = []
-    previous_dbs = []
+    previously_failed_jobs: List[db.ID] = []
+    previous_dbs: List[str] = []
     n_jobs_run = 0
 
     while True:
@@ -378,7 +379,7 @@ def _loop_impl(
             try:
                 manager.disconnect()
                 manager.connect()
-            except Exception as e:
+            except BaseException as e:
                 _log(config, "Failed to connect to database with error " + str(e) + ". Keep trying to connect.")
 
         # ===================
@@ -419,7 +420,7 @@ def _loop_impl(
             calculation.link(collection)
 
             if calculation.has_id():  # we found a calculation
-                time_waited = 0
+                time_waited = 0.0
                 executor = calculation.get_executor()
                 while executor.strip() == "" and time_waited < 120.0:
                     # if the update step has not been properly processed yet, wait
@@ -457,8 +458,9 @@ def _loop_impl(
         job_name = calculation.get_job().order
         try:
             class_name = available_jobs[job_name]
-        except BaseException:
-            raise KeyError("Missing Job in list of possible jobs.\n" + "Dev-Note: This error should not be reachable.")
+        except BaseException as e:
+            raise KeyError("Missing Job in list of possible jobs.\n" +
+                           "Dev-Note: This error should not be reachable.") from e
         module = import_module("scine_puffin.jobs." + job_name)
         class_ = getattr(module, class_name)
         job = class_()
@@ -576,15 +578,17 @@ def _job_execution(config: Configuration, job, manager, calculation, SUCCESS=Non
     if success and archive:
         try:
             job.archive(archive)
-        except OSError as e:
-            _log(config, "Failed to archive job: {:s} with error {:s}".format(str(calculation.id()), str(e)))
+        except OSError:
+            _log(config, "Failed to archive job: {:s} with error {:s}".format(
+                str(calculation.id()), traceback.format_exc()))
     # Archive error if requested and job has failed
     error = config["daemon"]["error_dir"]
     if not success and error:
         try:
             job.archive(error)
-        except OSError as e:
-            _log(config, "Failed to archive job: {:s} with error {:s}".format(str(calculation.id()), str(e)))
+        except OSError:
+            _log(config, "Failed to archive job: {:s} with error {:s}".format(
+                str(calculation.id()), traceback.format_exc()))
     # End timer
     end = datetime.now()
     calculation.set_runtime((end - start).total_seconds())

@@ -78,6 +78,7 @@ class ScineReactComplexNt2(ReactJob):
        4. Validation using an IRC scan: ``irc_*``
        5. Optimization of the structures obtained with the IRC scan : ``ircopt_*``
        6. Optimization of new products: ``opt_*``
+       7. (Optional) optimization of the reactive complex: ``rcopt_*``
 
       The following options are available for the reactive complex generation:
 
@@ -187,7 +188,7 @@ class ScineReactComplexNt2(ReactJob):
 
     def __init__(self):
         super().__init__()
-        self.name = "Scine React Job with Newton Trajectory"
+        self.name = "Scine React Job with Newton Trajectory 2"
         self.exploration_key = "nt"
         nt_defaults = {
             "output": ["nt"],
@@ -215,11 +216,11 @@ class ScineReactComplexNt2(ReactJob):
             "tsopt": tsopt_defaults,
             "irc": irc_defaults,
             "ircopt": ircopt_defaults,
-            "opt": opt_defaults,
+            "opt": opt_defaults
         }
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
+    def run(self, _, calculation, config: Configuration) -> bool:
 
         import scine_readuct as readuct
         import scine_utilities as utils
@@ -231,15 +232,24 @@ class ScineReactComplexNt2(ReactJob):
             """ NT JOB """
             print("NT Settings:")
             print(self.settings["nt"], "\n")
-            self.systems, success = readuct.run_nt2_task(self.systems, ["reactive_complex"], **self.settings["nt"])
+            self.systems, success = self.observed_readuct_call(
+                'run_nt2_task', self.systems, [self.rc_key], **self.settings["nt"])
             if not success:
                 self.verify_connection()
+                """ Barrierless Reaction Check """
+                if ';' in self.start_graph:
+                    rc_opt_graph, _ = self.check_for_barrierless_reaction()
+                else:
+                    rc_opt_graph = None
+                if rc_opt_graph is not None:
+                    self.save_barrierless_reaction(rc_opt_graph, program_helper)
+                else:
+                    calculation.set_comment(self.name + " NT Job: No TS guess found.")
                 self.capture_raw_output()
-                calculation.set_comment(self.name + " NT Job: No TS guess found.")
                 # update model because job will be marked complete
                 # use start calculator because nt might have last failed calculation
                 scine_helper.update_model(
-                    self.systems["reactive_complex"], calculation, self.config
+                    self.systems[self.rc_key], calculation, self.config
                 )
                 raise breakable.Break
 
@@ -248,9 +258,8 @@ class ScineReactComplexNt2(ReactJob):
             self.setup_automatic_mode_selection("tsopt")
             print("TSOpt Settings:")
             print(self.settings["tsopt"], "\n")
-            self.systems, success = readuct.run_tsopt_task(
-                self.systems, inputs, **self.settings["tsopt"]
-            )
+            self.systems, success = self.observed_readuct_call(
+                'run_tsopt_task', self.systems, inputs, **self.settings["tsopt"])
             self.throw_if_not_successful(
                 success,
                 self.systems,
@@ -282,7 +291,8 @@ class ScineReactComplexNt2(ReactJob):
             # IRC (only a few steps to allow decent graph extraction)
             print("IRC Settings:")
             print(self.settings["irc"], "\n")
-            self.systems, success = readuct.run_irc_task(self.systems, inputs, **self.settings["irc"])
+            self.systems, success = self.observed_readuct_call(
+                'run_irc_task', self.systems, inputs, **self.settings["irc"])
 
             """ IRC OPT JOB """
             # Run a small energy minimization after initial IRC
@@ -293,8 +303,10 @@ class ScineReactComplexNt2(ReactJob):
                 atoms = self.systems[i].structure
                 self.random_displace_atoms(atoms)
                 self.systems[i].positions = atoms.positions
-            self.systems, success = readuct.run_opt_task(self.systems, [inputs[0]], **self.settings["ircopt"])
-            self.systems, success = readuct.run_opt_task(self.systems, [inputs[1]], **self.settings["ircopt"])
+            self.systems, success = self.observed_readuct_call(
+                'run_opt_task', self.systems, [inputs[0]], **self.settings["ircopt"])
+            self.systems, success = self.observed_readuct_call(
+                'run_opt_task', self.systems, [inputs[1]], **self.settings["ircopt"])
 
             """ Check whether we have a valid IRC """
             initial_charge = settings_manager.calculator_settings[utils.settings_names.molecular_charge]

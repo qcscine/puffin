@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import sphinx_rtd_theme
+import scine_puffin
 import recommonmark
 from recommonmark.transform import AutoStructify
 
@@ -63,7 +65,6 @@ author = 'Reiher Group'
 # |version| and |release|, also used in various other places throughout the
 # built documents.
 #
-import scine_puffin
 # The short X.Y version.
 version = scine_puffin.__version__
 # The full version, including alpha/beta/rc tags.
@@ -94,7 +95,6 @@ todo_include_todos = False
 # a list of builtin themes.
 #
 html_theme = 'sphinx_rtd_theme'
-import sphinx_rtd_theme
 html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 
 # Theme options are theme-specific and customize the look and feel of a theme

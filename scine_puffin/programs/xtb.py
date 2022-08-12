@@ -16,9 +16,6 @@ class Xtb(Program):
     Scine: Xtb wrapper -- installation and verification class
     """
 
-    def __init__(self, settings: dict):
-        super().__init__(settings)
-
     def install(self, repo_dir: str, install_dir: str, ncores: int):
         if self.root:
             raise NotImplementedError
@@ -30,11 +27,11 @@ class Xtb(Program):
     def check_install(self):
         raise NotImplementedError
 
-    def setup_environment(self, config: Configuration, env: dict, executables: dict):
+    def setup_environment(self, config: Configuration, env_paths: dict, env_vars: dict):
         if self.root:
             raise NotImplementedError
         elif self.source:
-            executables["XTBPATH"] = os.path.join(config.daemon()["software_dir"], "install", "share", "xtb")
+            env_vars["XTBPATH"] = os.path.join(config.daemon()["software_dir"], "install", "share", "xtb")
         else:
             raise RuntimeError
 

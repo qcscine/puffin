@@ -18,7 +18,7 @@ def bootstrap(config: Configuration):
 
     Parameters
     ----------.
-    config :: puffin.config.Configuration
+    config :: scine_puffin.config.Configuration
        The current configuration of the Puffin.
     """
     # Prepare directories
@@ -100,6 +100,6 @@ def bootstrap(config: Configuration):
     # Windows TODO also generate a bat file
     with open("puffin.sh", "w") as f:
         for key, paths in env.items():
-            f.write("export {:s}={:s}:${:s}\n".format(key, paths, key))
+            f.write(f"export {key}={paths}:${key}\n")
         for key, paths in executables.items():
-            f.write("export {:s}={:s}\n".format(key, paths))
+            f.write(f"export {key}={paths}\n")

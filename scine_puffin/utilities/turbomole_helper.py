@@ -86,7 +86,7 @@ class TurbomoleHelper:
         if error_test:
             with open(out_file) as file:
                 lines = file.readlines()
-                for line_index, line in enumerate(lines):
+                for line in lines:
                     if "ended abnormally" in line:
                         raise RuntimeError(message)
 
@@ -100,7 +100,7 @@ class TurbomoleHelper:
         import scine_utilities as utils
 
         # Read in xyz file and transform coordinates from Angstrom to Bohr
-        xyz, bonds = utils.io.read(self.input_structure)
+        xyz, _ = utils.io.read(self.input_structure)
 
         coord_in_bohr = []
         for i in range(len(xyz)):
@@ -309,8 +309,8 @@ class TurbomoleHelper:
                     else:
                         energy = line.split()[1]
             return float(energy)
-        except FileNotFoundError:
-            raise RuntimeError("Energy file is not accessible because the job failed.")
+        except FileNotFoundError as e:
+            raise RuntimeError("Energy file is not accessible because the job failed.") from e
 
     def evaluate_spin_mode(self, calculation_settings) -> str:
         import scine_utilities.settings_names as sn

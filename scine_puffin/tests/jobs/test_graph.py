@@ -22,9 +22,6 @@ from ..resources import resource_path
 
 class GraphJobTest(JobTestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @skip_without('database', 'molassembler')
     def test_butane(self):
         from scine_puffin.jobs.graph import Graph

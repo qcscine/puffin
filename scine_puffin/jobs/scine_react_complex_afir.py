@@ -80,6 +80,7 @@ class ScineReactComplexAfir(ReactJob):
        5. Validation using an IRC scan: ``irc_*``
        6. Optimization of the structures obtained with the IRC scan : ``ircopt_*``
        7. Optimization of new products: ``opt_*``
+       8. (Optional) optimization of the reactive complex: ``rcopt_*``
 
       The following options are available for the reactive complex generation:
 
@@ -193,6 +194,7 @@ class ScineReactComplexAfir(ReactJob):
         self.exploration_key = "afir"
         afir_defaults = {
             "output": ["afir"],
+            "stop_on_error": False,
         }
         bspline_defaults = {
             "output": ["tsguess"],
@@ -238,16 +240,25 @@ class ScineReactComplexAfir(ReactJob):
             """ AFIR Optimization """
             print("Afir Settings:")
             print(self.settings["afir"], "\n")
-            self.systems, success = readuct.run_afir_task(
-                self.systems, ["reactive_complex"], **self.settings["afir"])
+            self.systems, success = self.observed_readuct_call(
+                'run_afir_task', self.systems, [self.rc_key], **self.settings["afir"]
+            )
             if not success:
                 self.verify_connection()
+                """ Barrierless Reaction Check """
+                if ';' in self.start_graph:
+                    rc_opt_graph, _ = self.check_for_barrierless_reaction()
+                else:
+                    rc_opt_graph = None
+                if rc_opt_graph is not None:
+                    self.save_barrierless_reaction(rc_opt_graph, program_helper)
+                else:
+                    calculation.set_comment(self.name + " AFIR Job: No TS guess found.")
                 self.capture_raw_output()
-                calculation.set_comment(self.name + ": No endpoint found in AFIR optimization.")
                 # update model because job will be marked complete
                 # use start calculator because afir might have last failed calculation
                 scine_helper.update_model(
-                    self.systems["reactive_complex"], calculation, self.config
+                    self.systems[self.rc_key], calculation, self.config
                 )
                 raise breakable.Break
 
@@ -255,8 +266,8 @@ class ScineReactComplexAfir(ReactJob):
             inputs = self.output("afir")
             print("Endpoint Opt Settings:")
             print(self.settings["opt"], "\n")
-            self.systems, success = readuct.run_optimization_task(
-                self.systems, inputs, **self.settings["opt"]
+            self.systems, success = self.observed_readuct_call(
+                'run_optimization_task', self.systems, inputs, **self.settings["opt"]
             )
             self.throw_if_not_successful(
                 success,
@@ -291,7 +302,7 @@ class ScineReactComplexAfir(ReactJob):
                 raise breakable.Break
 
             """ B-Spline Optimization """
-            inputs = ["reactive_complex"] + self.output("opt")
+            inputs = [self.rc_key] + self.output("opt")
             print("\nBspline Settings:")
             print(self.settings["bspline"], "\n")
             self.systems, success = readuct.run_bspline_task(
@@ -310,8 +321,8 @@ class ScineReactComplexAfir(ReactJob):
             self.setup_automatic_mode_selection("tsopt")
             print("TSOpt Settings:")
             print(self.settings["tsopt"], "\n")
-            self.systems, success = readuct.run_tsopt_task(
-                self.systems, inputs, **self.settings["tsopt"]
+            self.systems, success = self.observed_readuct_call(
+                'run_tsopt_task', self.systems, inputs, **self.settings["tsopt"]
             )
             self.throw_if_not_successful(
                 success, self.systems, inputs, ["energy"], "TS optimization failed:\n"
@@ -332,14 +343,17 @@ class ScineReactComplexAfir(ReactJob):
             inputs = self.output("tsopt")
             print("IRC Settings:")
             print(self.settings["irc"], "\n")
-            self.systems, success = readuct.run_irc_task(self.systems, inputs, **self.settings["irc"])
+            self.systems, success = self.observed_readuct_call(
+                'run_irc_task', self.systems, inputs, **self.settings["irc"])
 
             """ IRC Opt"""
             inputs = self.output("irc")
             print("IRC Optimization Settings:")
             print(self.settings["ircopt"], "\n")
-            self.systems, success = readuct.run_opt_task(self.systems, [inputs[0]], **self.settings["ircopt"])
-            self.systems, success = readuct.run_opt_task(self.systems, [inputs[1]], **self.settings["ircopt"])
+            self.systems, success = self.observed_readuct_call(
+                'run_opt_task', self.systems, [inputs[0]], **self.settings["ircopt"])
+            self.systems, success = self.observed_readuct_call(
+                'run_opt_task', self.systems, [inputs[1]], **self.settings["ircopt"])
 
             """ Check whether we have a valid IRC """
             initial_charge = settings_manager.calculator_settings[utils.settings_names.molecular_charge]

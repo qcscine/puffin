@@ -15,9 +15,6 @@ class Sparrow(Program):
     Scine: Sparrow -- installation and verification class
     """
 
-    def __init__(self, settings: dict):
-        super().__init__(settings)
-
     def install(self, repo_dir: str, install_dir: str, ncores: int):
         if self.root:
             raise NotImplementedError
@@ -29,7 +26,7 @@ class Sparrow(Program):
     def check_install(self):
         raise NotImplementedError
 
-    def setup_environment(self, config: Configuration, env: dict, executables: dict):
+    def setup_environment(self, config: Configuration, env_paths: dict, env_vars: dict):
         if self.root:
             raise NotImplementedError
         elif self.source:

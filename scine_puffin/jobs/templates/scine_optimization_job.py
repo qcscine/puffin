@@ -63,6 +63,8 @@ class OptimizationJob(ScineJob):
             new_label = db.Label.USER_OPTIMIZED
         elif label == db.Label.SURFACE_GUESS or label == db.Label.SURFACE_OPTIMIZED:
             new_label = db.Label.SURFACE_OPTIMIZED
+        elif label == db.Label.COMPLEX_GUESS or db.Label.COMPLEX_OPTIMIZED:
+            new_label = db.Label.COMPLEX_OPTIMIZED
         else:
             error = (
                 "Unknown label '"

@@ -90,7 +90,7 @@ class ScineGeometryOptimization(OptimizationJob):
         settings_manager, program_helper = self.create_helpers(structure)
         try:
             new_label = self.determine_new_label(structure)
-        except Exception:
+        except BaseException:
             return False
 
         # actual calculation

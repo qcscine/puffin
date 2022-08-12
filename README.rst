@@ -236,8 +236,8 @@ How to Cite
 -----------
 
 When publishing results obtained with Puffin, please cite the corresponding
-release as archived on `Zenodo <https://zenodo.org/>`_ (please use the DOI of the
-respective release).
+release as archived on `Zenodo <https://doi.org/10.5281/zenodo.6695461>`_ (DOI
+10.5281/zenodo.6695461; please use the DOI of the respective release).
 
 In addition, we kindly request you to cite the following article when using Puffin:
 J. P. Unsleber, S. A. Grimmel, M. Reiher,

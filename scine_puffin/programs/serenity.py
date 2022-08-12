@@ -16,9 +16,6 @@ class Serenity(Program):
     Serenity -- installation and verification class
     """
 
-    def __init__(self, settings: dict):
-        super().__init__(settings)
-
     def install(self, repo_dir: str, install_dir: str, ncores: int):
         if self.root:
             pass

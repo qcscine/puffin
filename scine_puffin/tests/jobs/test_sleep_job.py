@@ -22,9 +22,6 @@ from ..resources import resource_path
 
 class SleepJobTest(JobTestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @skip_without('database')
     def test_sleep(self):
         # import Job

@@ -22,9 +22,6 @@ from ..resources import resource_path
 
 class OrcaGeometryOptimizationJobTest(JobTestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @skip_without('database', 'orca')
     def test_energy(self):
         # import Job

@@ -15,10 +15,7 @@ class Turbomole(Program):
     Setup of the Turbomole program
     """
 
-    def __init__(self, settings: dict):
-        super().__init__(settings)
-
-    def install(self, build_dir: str, install_dir: str, ncores: int):
+    def install(self, repo_dir: str, install_dir: str, ncores: int):
         if self.root:
             pass
         elif self.source:
@@ -29,10 +26,10 @@ class Turbomole(Program):
     def check_install(self):
         raise NotImplementedError
 
-    def setup_environment(self, config: Configuration, env: dict, executables: dict):
+    def setup_environment(self, config: Configuration, env_paths: dict, env_vars: dict):
         if self.root:
             # $TURBODIR needs to be set in order for Turbomole to execute properly
-            executables["TURBODIR"] = self.root
+            env_vars["TURBODIR"] = self.root
         elif self.source:
             pass
         else:

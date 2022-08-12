@@ -86,7 +86,7 @@ class Program:
         -------
         models :: List[str]
             A list of names of models that are available if the program is
-            avialable.
+            available.
         """
         raise NotImplementedError
 
@@ -103,7 +103,7 @@ class Program:
             except BaseException:
                 try:
                     repository.git.checkout("master")
-                except git.exc.GitCommandError:
+                except git.exc.GitCommandError:  # type: ignore[misc]
                     repository.git.checkout("main")
                 repository.git.submodule("update", "--init")
                 repository.remotes.origin.pull()

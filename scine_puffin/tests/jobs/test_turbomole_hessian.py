@@ -22,9 +22,6 @@ from ..resources import resource_path
 
 class TurbomoleHessianJobTest(JobTestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @skip_without('database', 'turbomole')
     def test_hessian(self):
         # import Job

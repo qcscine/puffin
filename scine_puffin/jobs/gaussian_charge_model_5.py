@@ -76,8 +76,8 @@ class GaussianChargeModel5(Job):
                 for i in range(line_begin, line_begin + natoms):
                     line = lines[i]
                     cm5_charges.append(float(line.split()[7]))
-            except UnboundLocalError:
-                raise RuntimeError("CM5 charges were not present in the Gaussian output file.")
+            except UnboundLocalError as e:
+                raise RuntimeError("CM5 charges were not present in the Gaussian output file.") from e
 
         return cm5_charges
 
@@ -146,7 +146,7 @@ class GaussianChargeModel5(Job):
         # A sanity check
         if len(cm5_charges) != natoms:
             calculation.set_comment(
-                "Calculation failed because the number" " of parsed CM5 charges does not equal" " the number of atoms."
+                "Calculation failed because the number of parsed CM5 charges does not equal the number of atoms."
             )
             calculation.set_status(db.Status.FAILED)
             return False

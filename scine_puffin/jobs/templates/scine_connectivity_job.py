@@ -4,7 +4,7 @@ Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
 See LICENSE.txt for details.
 """
 
-from typing import Dict
+from typing import Dict, Set
 import sys
 
 from .job import job_configuration_wrapper
@@ -97,6 +97,7 @@ class ConnectivityJob(ScineJob):
         # Bond order calculation with readuct
         else:
             if not self.expected_results_check(systems, [key], ["energy", "bond_orders", "atomic_charges"])[0]:
+                # we don't have results yet, so we calculate
                 systems, success = readuct.run_single_point_task(
                     systems, [key], require_bond_orders=True, require_charges=True
                 )
@@ -107,7 +108,7 @@ class ConnectivityJob(ScineJob):
 
         return bond_orders
 
-    def make_graph_from_calc(self, systems: dict, key: str):
+    def make_graph_from_calc(self, systems: dict, key: str) -> str:
         """
         Runs bond orders for the specified name in the dictionary of systems if not present already and
         return cbor graph for based on them.
@@ -207,7 +208,7 @@ class ConnectivityJob(ScineJob):
             n_atoms += len(structure.get_atoms())
         return set(surface_indices)
 
-    def surface_indices(self, structure):
+    def surface_indices(self, structure) -> Set[int]:
         import scine_database as db
 
         if "surface" in str(structure.get_label()).lower():

@@ -91,6 +91,7 @@ class Cp2kTests(unittest.TestCase):
         assert new_structure.get_property(cp2k_helper.cutoff_name) == id1
         assert new_structure.get_property(cp2k_helper.rel_cutoff_name) == id2
 
+        manager.wipe()
         return manager, structure, calculation, config
 
     @skip_without('cp2k', 'database', 'readuct')

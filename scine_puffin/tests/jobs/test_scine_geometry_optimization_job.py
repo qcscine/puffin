@@ -22,9 +22,6 @@ from ..resources import resource_path
 
 class ScineGeometryOptimizationJobTest(JobTestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     def run_by_label(self, input_label, expected_label):
         # import Job
         from scine_puffin.jobs.scine_geometry_optimization import ScineGeometryOptimization

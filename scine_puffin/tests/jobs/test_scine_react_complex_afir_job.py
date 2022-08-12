@@ -15,17 +15,14 @@ from ..testcases import (
 
 from ..db_setup import (
     add_calculation,
-    add_compound_and_structure,
-    add_structure
+    add_structure,
+    add_compound_and_structure
 )
 
 from ..resources import resource_path
 
 
 class ScineReactComplexAfirJobTest(JobTestCase):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     @skip_without('database', 'readuct', 'molassembler')
     def test_energy_and_structure(self):
@@ -151,18 +148,26 @@ class ScineReactComplexAfirJobTest(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 8
-        assert len(results.structure_ids) == 4  # re-optimized reactants (x2) + TS + product
-        assert len(results.elementary_step_ids) == 1
-        new_elementary_step = db.ElementaryStep(results.elementary_step_ids[0], elementary_steps)
-        assert len(new_elementary_step.get_reactants(db.Side.RHS)[1]) == 1
-        product = db.Structure(new_elementary_step.get_reactants(db.Side.RHS)[1][0], structures)
+        assert len(results.property_ids) == 10
+        assert len(results.structure_ids) == 3 + 2  # re-optimized reactants (x2) + complex + TS + product
+        assert len(results.elementary_step_ids) == 2
+        new_elementary_step_one = db.ElementaryStep(results.elementary_step_ids[0], elementary_steps)
+        assert new_elementary_step_one.get_type() == db.ElementaryStepType.BARRIERLESS
+        new_elementary_step_two = db.ElementaryStep(results.elementary_step_ids[1], elementary_steps)
+        assert new_elementary_step_two.get_type() == db.ElementaryStepType.REGULAR
+        assert new_elementary_step_one.get_reactants(db.Side.RHS)[1][0] == \
+            new_elementary_step_two.get_reactants(db.Side.LHS)[0][0]
+        s_complex = db.Structure(new_elementary_step_two.get_reactants(db.Side.LHS)[0][0])
+        s_complex.link(structures)
+        assert s_complex.get_label() == db.Label.COMPLEX_OPTIMIZED
+        assert len(new_elementary_step_two.get_reactants(db.Side.RHS)[1]) == 1
+        product = db.Structure(new_elementary_step_two.get_reactants(db.Side.RHS)[1][0], structures)
         assert product.has_property('bond_orders')
         assert product.has_graph('masm_cbor_graph')
         bonds = utils.BondOrderCollection()
         bonds.matrix = db.SparseMatrixProperty(product.get_property('bond_orders'), properties).get_data()
         assert len(get_molecules_result(product.get_atoms(), bonds, job.connectivity_settings).molecules) == 1
-        new_ts = db.Structure(new_elementary_step.get_transition_state(), structures)
+        new_ts = db.Structure(new_elementary_step_two.get_transition_state(), structures)
         assert new_ts.has_property('electronic_energy')
         energy_props = new_ts.get_properties("electronic_energy")
         assert energy_props[0] in results.property_ids

@@ -9,5 +9,8 @@ sphinx_autodoc_typehints
 sphinx_copybutton
 numpydoc
 pylint
+pylint-exit
 autopep8
 flake8
+mypy
+types-PyYAML

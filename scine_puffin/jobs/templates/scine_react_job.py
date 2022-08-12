@@ -7,12 +7,14 @@ See LICENSE.txt for details.
 from typing import Any, Dict, List, Tuple, Union, Optional
 import numpy as np
 import sys
+from copy import deepcopy
 import scine_molassembler as masm
 
 from .job import job_configuration_wrapper
 from .scine_connectivity_job import ConnectivityJob
 from .scine_hessian_job import HessianJob
 from .scine_optimization_job import OptimizationJob
+from .scine_observers import StoreEverythingObserver
 from scine_puffin.config import Configuration
 from scine_puffin.utilities.scine_helper import SettingsManager, update_model
 from scine_puffin.utilities.program_helper import ProgramHelper
@@ -31,11 +33,14 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         self.own_expected_results = []
         self.rc_key = "rc"
         self.job_key = "job"
+        self.rc_opt_system_name = "rcopt"
         # to be extended by child:
         self.settings: Dict[str, Dict[str, Any]] = {
             self.job_key: {
                 "imaginary_wavenumber_threshold": 0.0,
                 "spin_propensity_check": 2,
+                "store_full_mep": False,
+                "store_all_structures": False,
             },
             self.rc_key: {
                 "minimal_spin_multiplicity": False,
@@ -45,6 +50,12 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 "x_alignment_1": [],
                 "displacement": 0.0,
             },
+            self.rc_opt_system_name: {
+                "output": [self.rc_opt_system_name],
+                "stop_on_error": False,
+                "convergence_max_iterations": 500,
+                "geoopt_coordinate_system": "cartesianWithoutRotTrans",
+            }
         }
         self.start_graph = ""
         self.end_graph = ""
@@ -53,6 +64,10 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         self.start_decision_lists = []
         self.ref_structure = None
         self.step_direction = None
+        self.lhs_barrierless_reaction = False
+        self.lhs_complexation = False
+        self.rhs_complexation = False
+        self.complexation_criterion = -12.0 / 2625.5  # kj/mol
         self.check_charges = True
         self.systems = {}
 
@@ -64,6 +79,24 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
     @staticmethod
     def required_programs():
         return ["database", "molassembler", "readuct", "utils"]
+
+    def observed_readuct_call(self, call_str: str, systems, input_names, **kwargs):
+        import scine_readuct as readuct
+
+        observers = []
+        observer_functions = []
+        model = self._calculation.get_model()
+        model.complete_model(systems[input_names[0]].settings)
+        if self.settings[self.job_key]["store_all_structures"]:
+            observers.append(StoreEverythingObserver(self._calculation.get_id(), model))
+            observer_functions = [observers[-1].gather]
+        ret = getattr(readuct, call_str)(systems, input_names, observers=observer_functions, **kwargs)
+        # TODO this may need to be redone for multi input calls
+        charge = systems[input_names[0]].settings["molecular_charge"]
+        multiplicity = systems[input_names[0]].settings["spin_multiplicity"]
+        for observer in observers:
+            observer.finalize(self._manager, charge, multiplicity)
+        return ret
 
     def reactive_complex_preparations(
         self,
@@ -84,6 +117,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             A database property holding bond orders.
         """
         import scine_utilities as utils
+        import scine_database as db
 
         # preprocessing of structure
         self.ref_structure = self.check_structures()
@@ -93,8 +127,24 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         # This overwrites any default settings by user settings
         settings_manager.separate_settings(self._calculation.get_settings())
         self.sort_settings(settings_manager.task_settings)
+        """ Setup calculators for all reactants """
+        self.systems = dict()
+        for i, structure_id in enumerate(self._calculation.get_structures()):
+            structure = db.Structure(structure_id, self._structures)
+            name = "reactant_{:02d}".format(i)
+            xyz_name = name + ".xyz"
+            utils.io.write(xyz_name, structure.get_atoms())
+            # correct PES
+            structure_calculator_settings = deepcopy(settings_manager.calculator_settings)
+            structure_calculator_settings[utils.settings_names.molecular_charge] = structure.get_charge()
+            structure_calculator_settings[utils.settings_names.spin_multiplicity] = structure.get_multiplicity()
+            reactant = utils.core.load_system_into_calculator(
+                xyz_name,
+                self._calculation.get_model().method_family,
+                **structure_calculator_settings,
+            )
+            self.systems[name] = reactant
         reactive_complex_atoms = self.build_reactive_complex(settings_manager)
-
         # If a user explicitly chooses a reactive complex charge that is different from the start structures
         # we cannot expect any of our a posteriori checks for structure charges to work
         self.check_charges = bool(
@@ -105,7 +155,6 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 "Warning: You specified a reactive complex charge that differs from the sum of the "
                 "structure charges."
             )
-
         """ Setup Reactive Complex """
         # Set up initial calculator
         utils.io.write("reactive_complex.xyz", reactive_complex_atoms)
@@ -114,18 +163,17 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             self._calculation.get_model().method_family,
             **settings_manager.calculator_settings,
         )
-        self.systems = {"reactive_complex": reactive_complex}
+        self.systems[self.rc_key] = reactive_complex
         if program_helper is not None:
             program_helper.calculation_preprocessing(
-                self.systems["reactive_complex"], self._calculation.get_settings())
+                self.systems[self.rc_key], self._calculation.get_settings())
 
         # Calculate bond orders and graph of reactive complex and compare to database graph of start structures
-        reactive_complex_graph = self.make_graph_from_calc(self.systems, "reactive_complex")
+        reactive_complex_graph = self.make_graph_from_calc(self.systems, self.rc_key)
         if not masm.JsonSerialization.equal_molecules(reactive_complex_graph, self.start_graph):
             self.raise_named_exception(
                 "Reactive complex graph differs from combined start structure graphs."
             )
-
         return settings_manager, program_helper
 
     def check_structures(self, start_structures: Union[List, None] = None):
@@ -218,39 +266,42 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         structures :: List[scine_database.Structure]
             The reactant structures.
         """
-        if len(structures) == 1:
-            s0 = structures[0]
-            self.determine_pes_of_rc(settings_manager, s0)
-            if not s0.has_graph("masm_cbor_graph"):
-                self.raise_named_exception(
-                    "Missing reference graph in start structure."
-                )
-            self.start_graph = self._cbor_graph_from_structure(s0)
-            self.start_charges = [s0.get_charge()]
-            self.start_multiplicities = [s0.get_multiplicity()]
-            self.start_decision_lists = [self._decision_list_from_structure(s0)]
-        elif len(structures) == 2:
-            s0 = structures[0]
-            s1 = structures[1]
-            start_charges = [s0.get_charge(), s1.get_charge()]
-            start_multiplicities = [s0.get_multiplicity(), s1.get_multiplicity()]
-            start_graphs = [
-                self._cbor_graph_from_structure(s0),
-                self._cbor_graph_from_structure(s1),
-            ]
-            self.start_decision_lists = [
-                self._decision_list_from_structure(s0),
-                self._decision_list_from_structure(s1),
-            ]
-            start_graphs, self.start_charges, self.start_multiplicities, self.start_decision_lists = (
+        graphs = []
+        if len(structures) < 3:
+            for i, s in enumerate(structures):
+                decision_list = self._decision_list_from_structure(s)
+                graph = self._cbor_graph_from_structure(s)
+                if decision_list is None:
+                    decision_list = ""
+                if ";" not in graph:
+                    graphs.append(graph)
+                    self.start_charges.append(s.get_charge())
+                    self.start_multiplicities.append(s.get_multiplicity())
+                    self.start_decision_lists.append(decision_list)
+                else:
+                    graphs += graph.split(';')
+                    name = "reactant_{:02d}".format(i)
+                    (
+                        _,
+                        split_graph,
+                        split_charges,
+                        split_multiplicities,
+                        split_decision_lists,
+                    ) = self.get_graph_charges_multiplicities(name, s.get_charge())
+                    graphs += split_graph
+                    self.start_decision_lists += split_decision_lists
+                    self.start_charges += split_charges
+                    self.start_multiplicities += split_multiplicities
+
+            graphs, self.start_charges, self.start_multiplicities, self.start_decision_lists = (
                 list(start_val) for start_val in zip(*sorted(zip(
-                    start_graphs,
-                    start_charges,
-                    start_multiplicities,
+                    graphs,
+                    self.start_charges,
+                    self.start_multiplicities,
                     self.start_decision_lists)))
             )
-            self.start_graph = ";".join(start_graphs)
-            self.determine_pes_of_rc(settings_manager, s0, s1)
+            self.start_graph = ";".join(graphs)
+            self.determine_pes_of_rc(settings_manager, *structures)
         else:
             # should not be reachable
             self.raise_named_exception(
@@ -273,11 +324,11 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             self.raise_named_exception(f"Missing graph in structure {str(structure.id())}.")
         return structure.get_graph("masm_cbor_graph")
 
-    @staticmethod
-    def _decision_list_from_structure(structure) -> str:
+    @ staticmethod
+    def _decision_list_from_structure(structure) -> Optional[str]:
         """
-        Retrieve masm_decision_list from a database structure. Returns empty string if none present, which is
-        unavoidable for some cases
+        Retrieve masm_decision_list from a database structure.
+        Returns ``None`` if none present.
 
         Parameters
         ----------
@@ -285,10 +336,10 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
 
         Returns
         -------
-        masm_decision_list :: str
+        masm_decision_list :: Optional[str]
         """
         if not structure.has_graph("masm_decision_list"):
-            return ""
+            return None
         return structure.get_graph("masm_decision_list")
 
     def build_reactive_complex(self, settings_manager: SettingsManager):
@@ -422,20 +473,20 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             settings_manager.calculator_settings[molecular_charge] = charge
             settings_manager.calculator_settings[spin_multiplicity] = multiplicity
 
-    def _orient_coordinates(self, coord1: np.array, coord2: np.array) -> np.array:
+    def _orient_coordinates(self, coord1: np.ndarray, coord2: np.ndarray) -> np.ndarray:
         """
         A mathematical helper function to align the respective coordinates based on the given settings.
 
         Parameters
         -------
-        coord1 :: np.array of shape (n,3)
+        coord1 :: np.ndarray of shape (n,3)
             The coordinates of the first molecule
-        coord2 :: np.array of shape (m,3)
+        coord2 :: np.ndarray of shape (m,3)
             The coordinates of the second molecule
 
         Returns
         -------
-        coord :: np.array of shape (n+m, 3)
+        coord :: np.ndarray of shape (n+m, 3)
             The combined and aligned coordinates of both molecules
         """
         rc_settings = self.settings[self.rc_key]
@@ -603,11 +654,11 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             for i in min_charge_vals:
                 charges[i] -= 1
         for i in range(len(split_structures)):
-            electrons = 0
+            electrons = 0.0
             for elem in split_structures[i].elements:
                 electrons += utils.ElementInfo.Z(elem)
             electrons -= charges[i]
-            n_electrons.append(electrons)
+            n_electrons.append(int(round(electrons)))
 
         # This assumes minimal multiplicity, product multiplicities are again checked later around this multiplicity
         multiplicities = [nel % 2 + 1 for nel in n_electrons]
@@ -627,6 +678,42 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         ordered_structures = [split_structures[i] for i in structure_order]
 
         return ordered_structures, graph_string, charges, multiplicities, decision_lists
+
+    def check_for_barrierless_reaction(self):
+        """
+        Optimizes the reactive complex, comparing the result to the start
+        structures determining if a barrierless reaction occurred.
+
+        Returns
+        -------
+        rc_opt_graph :: Optional[str]
+            Sorted molassembler cbor graphs separated by semicolons of the
+            reaction product if there was any.
+        rc_opt_decision_lists :: Optional[List[str]]
+            Molassembler decision lists for free dihedrals of the reaction
+            product if there was any.
+        """
+        # Check for barrierless reaction leading to new graphs
+        if self.rc_opt_system_name not in self.systems:  # Skip if already done
+            print("Running Reactive Complex Optimization")
+            print("Settings:")
+            print(self.settings[self.rc_opt_system_name], "\n")
+            self.systems, success = self.observed_readuct_call(
+                'run_opt_task', self.systems, [self.rc_key], **self.settings[self.rc_opt_system_name]
+            )
+            self.throw_if_not_successful(
+                success,
+                self.systems,
+                [self.rc_opt_system_name],
+                [],
+                "Reactive complex optimization failed.\n",
+            )
+        _, rc_opt_graph, _, _, rc_opt_decision_lists =  \
+            self.get_graph_charges_multiplicities(self.rc_opt_system_name, sum(self.start_charges))
+
+        if not masm.JsonSerialization.equal_molecules(self.start_graph, rc_opt_graph):
+            return rc_opt_graph, rc_opt_decision_lists
+        return None, None
 
     def output(self, name: str) -> List[str]:
         """
@@ -669,7 +756,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             initial_charge: int,
             check_charges: bool,
             inputs: List[str],
-            calculator_settings: dict):
+            calculator_settings: dict) -> Union[Tuple[List[str], Optional[List[str]]], Tuple[None, None]]:
         """
         Check whether we found a new structure, whether our IRC matches the start
         (and end in case of double ended). This decision is made based on optimized
@@ -706,6 +793,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             )
         # All lists ordered according to graph - charges - multiplicities with decreasing priority
         # Get graphs, charges and minimal multiplicities of split forward and backward structures
+        print("Forward Bond Orders")
         (
             forward_structures,
             forward_graph,
@@ -713,6 +801,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             forward_multiplicities,
             forward_decision_lists,
         ) = self.get_graph_charges_multiplicities(inputs[0], initial_charge)
+        print("Backward Bond Orders")
         (
             backward_structures,
             backward_graph,
@@ -802,6 +891,24 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         ):
             product_names = forward_names
             self.step_direction = "forward"
+        elif ';' in self.start_graph:
+            rc_opt_graph, _ = self.check_for_barrierless_reaction()
+            print("Barrierless Check Graph:")
+            print(rc_opt_graph)
+            if rc_opt_graph is None:
+                self._calculation.set_comment(self.name + ": No IRC structure matches starting structure.")
+                return None, None
+            if masm.JsonSerialization.equal_molecules(forward_graph, rc_opt_graph):
+                self.step_direction = "backward"
+                product_names = backward_names
+                self.lhs_barrierless_reaction = True
+            elif masm.JsonSerialization.equal_molecules(backward_graph, rc_opt_graph):
+                self.step_direction = "forward"
+                product_names = forward_names
+                self.lhs_barrierless_reaction = True
+            else:
+                self._calculation.set_comment(self.name + ": No IRC structure matches starting structure.")
+                return None, None
         else:
             self._calculation.set_comment(self.name + ": No IRC structure matches starting structure.")
             return None, None
@@ -845,6 +952,26 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 self._calculation.set_comment(self.name + ": IRC does not match double ended method")
                 return None, None
 
+        # Check if complexations need to be tracked
+        forward_complexation_energy = 0.0
+        for name in forward_names:
+            forward_complexation_energy -= self.systems[name].get_results().energy
+        forward_complexation_energy += self.systems[inputs[0]].get_results().energy
+        if forward_complexation_energy < self.complexation_criterion:
+            if self.step_direction == "backward":
+                self.lhs_complexation = True
+            else:
+                self.rhs_complexation = True
+        backward_complexation_energy = 0.0
+        for name in backward_names:
+            backward_complexation_energy -= self.systems[name].get_results().energy
+        backward_complexation_energy += self.systems[inputs[1]].get_results().energy
+        if backward_complexation_energy < self.complexation_criterion:
+            if self.step_direction == "backward":
+                self.rhs_complexation = True
+            else:
+                self.lhs_complexation = True
+
         return product_names, start_names
 
     def optimize_structures(
@@ -854,7 +981,8 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         structure_charges: List[int],
         structure_multiplicities: List[int],
         calculator_settings: dict,
-    ):
+        stop_on_error: Optional[bool] = True
+    ) -> List[str]:
         """
         For each given product AtomCollection:
         First, construct a Scine Calculator and save in class member map.
@@ -879,6 +1007,8 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             The spin multiplicities of the structures.
         calculator_settings :: dict
             The general settings for the Scine calculator. Charge and spin multiplicity will be overwritten.
+        stop_on_error :: Optional[bool]
+            If set to False, skip unsuccessful calculations and replace calculator with None
 
         Returns
         -------
@@ -894,53 +1024,67 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             name = f"{name_stub}_{i:02d}"
             structure_names.append(name)
             utils.io.write(name + ".xyz", structure)
-            # correct PES
-            structure_calculator_settings = calculator_settings
-            structure_calculator_settings[utils.settings_names.molecular_charge] = structure_charges[i]
-            structure_calculator_settings[utils.settings_names.spin_multiplicity] = structure_multiplicities[i]
-            # generate calculator
-            new = utils.core.load_system_into_calculator(
-                name + ".xyz",
-                self._calculation.get_model().method_family,
-                **structure_calculator_settings,
-            )
-            self.systems[name] = new
+            try:
+                # correct PES
+                structure_calculator_settings = deepcopy(calculator_settings)
+                structure_calculator_settings[utils.settings_names.molecular_charge] = structure_charges[i]
+                structure_calculator_settings[utils.settings_names.spin_multiplicity] = structure_multiplicities[i]
+                # generate calculator
+                new = utils.core.load_system_into_calculator(
+                    name + ".xyz",
+                    self._calculation.get_model().method_family,
+                    **structure_calculator_settings,
+                )
+                self.systems[name] = new
+            except BaseException as e:
+                if stop_on_error:
+                    raise e
+                sys.stderr.write(f"{name} cannot be calculated because: {str(e)}")
+                self.systems[name] = None
 
         print("Product Opt Settings:")
         print(self.settings["opt"], "\n")
         # Optimize structures, if they have more than one atom; otherwise just run a single point calculation
         for structure in structure_names:
-            self.systems, success = readuct.run_single_point_task(
-                self.systems,
-                [structure],
-                spin_propensity_check=self.settings[self.job_key]["spin_propensity_check"],
-                require_bond_orders=True,
-            )
-            if len(self.systems[structure].structure) > 1:
-                print("Optimizing " + structure + ":\n")
-                self.systems, success = readuct.run_opt_task(
-                    self.systems, [structure], **self.settings["opt"]
-                )
-                self.throw_if_not_successful(
-                    success,
-                    self.systems,
-                    [structure],
-                    ["energy"],
-                    f"{name_stub.capitalize()} optimization failed:\n",
-                )
+            if self.systems[structure] is None:
+                continue
+            try:
                 self.systems, success = readuct.run_single_point_task(
                     self.systems,
                     [structure],
                     spin_propensity_check=self.settings[self.job_key]["spin_propensity_check"],
                     require_bond_orders=True,
                 )
-            self.throw_if_not_successful(
-                success,
-                self.systems,
-                [structure],
-                ["energy", "bond_orders"],
-                f"{name_stub.capitalize()} optimization failed:\n",
-            )
+                if len(self.systems[structure].structure) > 1:
+                    print("Optimizing " + structure + ":\n")
+                    self.systems, success = self.observed_readuct_call(
+                        'run_opt_task', self.systems, [structure], **self.settings["opt"]
+                    )
+                    self.throw_if_not_successful(
+                        success,
+                        self.systems,
+                        [structure],
+                        ["energy"],
+                        f"{name_stub.capitalize()} optimization failed:\n",
+                    )
+                    self.systems, success = readuct.run_single_point_task(
+                        self.systems,
+                        [structure],
+                        spin_propensity_check=self.settings[self.job_key]["spin_propensity_check"],
+                        require_bond_orders=True,
+                    )
+                self.throw_if_not_successful(
+                    success,
+                    self.systems,
+                    [structure],
+                    ["energy", "bond_orders"],
+                    f"{name_stub.capitalize()} optimization failed:\n",
+                )
+            except BaseException as e:
+                if stop_on_error:
+                    raise e
+                sys.stderr.write(f"{structure} cannot be calculated because: {str(e)}")
+                self.systems[structure] = None
         return structure_names
 
     def generate_spline(
@@ -1065,17 +1209,14 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             The names of the start structure names in the system map.
         program_helper :: Union[ProgramHelper, None]
             The ProgramHelper which might also want to do postprocessing
-
         tsopt_task_name :: str
             The name of the task where the TS was output
-
 
         Returns
         -------
         start_structure_ids :: List[scine_database.ID]
             A list of the database IDs of the start structures.
         """
-        new_label = self.determine_new_label(self.ref_structure, ignore_user_label=True)
         import scine_database as db
 
         # Update model to make sure there are no 'any' values left
@@ -1097,9 +1238,13 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 initial_graph = initial_structure.get_graph("masm_cbor_graph")
                 if not masm.JsonSerialization.equal_molecules(initial_graph, graph):
                     continue
-                aggregate_id = initial_structure.get_compound()
-                aggregate = db.Compound(aggregate_id)
-                aggregate.link(self._compounds)
+                aggregate_id = initial_structure.get_aggregate()
+                if ';' in initial_graph:
+                    aggregate = db.Flask(aggregate_id)
+                    aggregate.link(self._flasks)
+                else:
+                    aggregate = db.Compound(aggregate_id)
+                    aggregate.link(self._compounds)
                 existing_structures = aggregate.get_structures()
                 for existing_structure_id in existing_structures:
                     existing_structure = db.Structure(existing_structure_id)
@@ -1111,7 +1256,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 start_structure_ids.append(duplicate)
                 continue
 
-            new_structure = self.create_new_structure(self.systems[name], new_label)
+            new_structure = self.create_new_structure(self.systems[name], db.Label.MINIMUM_OPTIMIZED)
             self.transfer_properties(self.ref_structure, new_structure)
             self.store_energy(self.systems[name], new_structure)
             self.store_property(
@@ -1124,10 +1269,54 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 new_structure,
             )
             self.add_graph(new_structure, self.systems[name].get_results().bond_orders)
+            if ";" in graph:
+                new_structure.set_label(db.Label.COMPLEX_OPTIMIZED)
             if program_helper is not None:
                 program_helper.calculation_postprocessing(self._calculation, self.ref_structure, new_structure)
             start_structure_ids.append(new_structure.id())
         return start_structure_ids
+
+    def save_barrierless_reaction(self, product_graph: str, program_helper: Optional[ProgramHelper]):
+        import scine_database as db
+        self.lhs_barrierless_reaction = True
+        print("Barrierless product Graph:")
+        print(product_graph)
+        print("Start Graph:")
+        print(self.start_graph)
+        print("Barrierless Reaction Found")
+        db_results = self._calculation.get_results()
+        db_results.clear()
+        # Save RHS of barrierless step
+        rhs_complex_label = self.rc_opt_system_name
+        rhs_complex_system = self.systems[rhs_complex_label]
+        if ";" in product_graph:
+            rhs_complex = self.create_new_structure(rhs_complex_system, db.Label.COMPLEX_OPTIMIZED)
+        else:
+            rhs_complex = self.create_new_structure(rhs_complex_system, db.Label.MINIMUM_OPTIMIZED)
+        db_results.add_structure(rhs_complex.id())
+        self.transfer_properties(self.ref_structure, rhs_complex)
+        self.store_energy(self.systems[rhs_complex_label], rhs_complex)
+        bond_orders = self.make_bond_orders_from_calc(self.systems, rhs_complex_label)
+        self.store_property(
+            self._properties,
+            "bond_orders",
+            "SparseMatrixProperty",
+            bond_orders.matrix,
+            self._calculation.get_model(),
+            self._calculation,
+            rhs_complex,
+        )
+        self.add_graph(rhs_complex, bond_orders)
+        if program_helper is not None:
+            program_helper.calculation_postprocessing(self._calculation, self.ref_structure, rhs_complex)
+        # Save step
+        new_step = db.ElementaryStep()
+        new_step.link(self._elementary_steps)
+        new_step.create(self._calculation.get_structures(), [rhs_complex.id()])
+        new_step.set_type(db.ElementaryStepType.BARRIERLESS)
+        db_results.add_elementary_step(new_step.id())
+        self._calculation.set_comment(self.name + ": Barrierless reaction found.")
+        self._calculation.set_results(self._calculation.get_results() + db_results)
 
     def react_postprocessing(
         self,
@@ -1154,10 +1343,11 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             The ProgramHelper which might also want to do postprocessing
         tsopt_task_name :: str
             The name of the task where the TS was output
-        reactant_structur_ids :: List[scine_databse.ID]
+        reactant_structur_ids :: List[scine_database.ID]
             A list of all structure IDs for the reactants.
         """
         import scine_database as db
+        import scine_utilities as utils
 
         if not product_names:
             # should not be reachable
@@ -1176,8 +1366,9 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             self._calculation,
             self.config,
         )
+
         """ Save products """
-        new_label = self.determine_new_label(self.ref_structure, ignore_user_label=True)
+        new_label = db.Label.MINIMUM_OPTIMIZED
         end_structures = []
         for product in product_names:
             new_structure = self.create_new_structure(self.systems[product], new_label)
@@ -1205,20 +1396,198 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         if program_helper is not None:
             program_helper.calculation_postprocessing(self._calculation, self.ref_structure, new_ts)
         db_results.add_structure(new_ts.id())
-        """ Save Step """
+
+        """ Save Complexes """
+        if self.lhs_barrierless_reaction or self.lhs_complexation:
+            if self.lhs_barrierless_reaction:
+                lhs_complex_label = self.rc_opt_system_name
+                lhs_complex_graph, _ = self.check_for_barrierless_reaction()
+                lhs_complex_system = self.systems[lhs_complex_label]
+                if ';' in lhs_complex_graph:
+                    lhs_complex = self.create_new_structure(lhs_complex_system, db.Label.COMPLEX_OPTIMIZED)
+                else:
+                    lhs_complex = self.create_new_structure(lhs_complex_system, db.Label.MINIMUM_OPTIMIZED)
+                db_results.add_structure(lhs_complex.id())
+            else:
+                lhs_complex_label = "irc_backward" if self.step_direction == "forward" else "irc_forward"
+                lhs_complex_system = self.systems[lhs_complex_label]
+                lhs_complex = self.create_new_structure(lhs_complex_system, db.Label.COMPLEX_OPTIMIZED)
+            bond_orders = self.make_bond_orders_from_calc(self.systems, lhs_complex_label)
+            self.transfer_properties(self.ref_structure, lhs_complex)
+            self.store_energy(self.systems[lhs_complex_label], lhs_complex)
+            self.store_property(
+                self._properties,
+                "bond_orders",
+                "SparseMatrixProperty",
+                bond_orders.matrix,
+                self._calculation.get_model(),
+                self._calculation,
+                lhs_complex,
+            )
+            self.add_graph(lhs_complex, bond_orders)
+            # Keep track of the lhs structure calculation.
+            if program_helper is not None:
+                program_helper.calculation_postprocessing(self._calculation, self.ref_structure, lhs_complex)
+            db_results.add_structure(lhs_complex.id())
+        if self.rhs_complexation:
+            rhs_complex_label = "irc_forward" if self.step_direction == "forward" else "irc_backward"
+            bond_orders = self.make_bond_orders_from_calc(self.systems, rhs_complex_label)
+            rhs_complex_system = self.systems[rhs_complex_label]
+            rhs_complex = self.create_new_structure(rhs_complex_system, db.Label.COMPLEX_OPTIMIZED)
+            self.transfer_properties(self.ref_structure, rhs_complex)
+            self.store_energy(self.systems[rhs_complex_label], rhs_complex)
+            self.store_property(
+                self._properties,
+                "bond_orders",
+                "SparseMatrixProperty",
+                bond_orders.matrix,
+                self._calculation.get_model(),
+                self._calculation,
+                rhs_complex,
+            )
+            self.add_graph(rhs_complex, bond_orders)
+            if program_helper is not None:
+                program_helper.calculation_postprocessing(self._calculation, self.ref_structure, rhs_complex)
+            db_results.add_structure(rhs_complex.id())
+
+        """ Save Steps """
+        main_step_lhs = reactant_structur_ids
+        main_step_rhs = end_structures
+        if self.lhs_barrierless_reaction or self.lhs_complexation:
+            new_step = db.ElementaryStep()
+            new_step.link(self._elementary_steps)
+            new_step.create(reactant_structur_ids, [lhs_complex.id()])
+            new_step.set_type(db.ElementaryStepType.BARRIERLESS)
+            db_results.add_elementary_step(new_step.id())
+            main_step_lhs = [lhs_complex.id()]
+        if self.rhs_complexation:
+            new_step = db.ElementaryStep()
+            new_step.link(self._elementary_steps)
+            new_step.create([rhs_complex.id()], end_structures)
+            new_step.set_type(db.ElementaryStepType.BARRIERLESS)
+            db_results.add_elementary_step(new_step.id())
+            main_step_rhs = [rhs_complex.id()]
         new_step = db.ElementaryStep()
         new_step.link(self._elementary_steps)
-        new_step.create(reactant_structur_ids, end_structures)
+        new_step.create(main_step_lhs, main_step_rhs)
+        new_step.set_type(db.ElementaryStepType.REGULAR)
         new_step.set_transition_state(new_ts.id())
         db_results.add_elementary_step(new_step.id())
         """ Save Reaction Path as a Spline"""
         spline = self.generate_spline(tsopt_task_name)
         new_step.set_spline(spline)
+        """ Save Reaction Path """
+        charge = ts_calc.settings[utils.settings_names.molecular_charge]
+        multiplicity = ts_calc.settings[utils.settings_names.spin_multiplicity]
+        model = self._calculation.get_model()
+        if self.settings[self.job_key]["store_full_mep"]:
+            _ = self.save_mep_in_db(new_step, charge, multiplicity, model)
         """ Save new starting materials if there are any"""
         original_start_structures = self._calculation.get_structures()
         for rid in reactant_structur_ids:
             if rid not in original_start_structures:
+                # TODO should duplicates be removed here?
                 db_results.add_structure(rid)
         # intermediate function may have written directly to calculation
         #   results, therefore add to already existing
         self._calculation.set_results(self._calculation.get_results() + db_results)
+
+    def save_mep_in_db(self, elementary_step, charge, multiplicity, model):
+        """
+        Store each point on the MEP as a structure in the database.
+        Attaches `electronic_energy` properties for each point.
+
+        Notes
+        -----
+        * May throw exception
+
+        Parameters
+        ----------
+        tsopt_task_name :: str
+            Name of the transition state task.
+        """
+        import scine_utilities as utils
+        import scine_database as db
+        import os
+
+        def read_trj(fname):
+            trj = utils.io.read_trajectory(utils.io.TrajectoryFormat.Xyz, fname)
+            energies = []
+            with open(fname, "r") as f:
+                lines = f.readlines()
+                nAtoms = int(lines[0].strip())
+                i = 0
+                while i < len(lines):
+                    energies.append(float(lines[i + 1].strip()))
+                    i += nAtoms + 2
+            return trj, energies
+
+        def generate_structure(atoms, charge, multiplicity, model):
+            # New structure
+            new_structure = db.Structure()
+            new_structure.link(self._structures)
+            new_structure.create(
+                atoms,
+                charge,
+                multiplicity,
+                model,
+                db.Label.ELEMENTARY_STEP_OPTIMIZED,
+            )
+            return new_structure.get_id()
+
+        if self.step_direction == "forward":
+            dir = "forward"
+            rev_dir = "backward"
+        elif self.step_direction == "backward":
+            dir = "backward"
+            rev_dir = "forward"
+        else:
+            self.raise_named_exception("Could not determine elementary step direction.")
+
+        structure_ids = []
+        fpath = os.path.join(
+            self.work_dir, f"irc_{rev_dir}", f"irc_{rev_dir}.opt.trj.xyz"
+        )
+        if os.path.isfile(fpath):
+            trj, _ = read_trj(fpath)
+            for pos in reversed(trj):
+                sid = generate_structure(utils.AtomCollection(trj.elements, pos), charge, multiplicity, model)
+                structure_ids.append(sid)
+
+        fpath = os.path.join(
+            self.work_dir, f"irc_{rev_dir}", f"irc_{rev_dir}.irc.{rev_dir}.trj.xyz"
+        )
+        if os.path.isfile(fpath):
+            trj, _ = read_trj(fpath)
+            for pos in reversed(trj):
+                sid = generate_structure(utils.AtomCollection(trj.elements, pos), charge, multiplicity, model)
+                structure_ids.append(sid)
+        else:
+            raise Exception(
+                f"Missing IRC trajectory file: irc_{rev_dir}/irc_{rev_dir}.irc.{rev_dir}.trj.xyz"
+            )
+
+        structure_ids.append(elementary_step.get_transition_state())
+
+        fpath = os.path.join(
+            self.work_dir, f"irc_{dir}", f"irc_{dir}.irc.{dir}.trj.xyz"
+        )
+        if os.path.isfile(fpath):
+            trj, _ = read_trj(fpath)
+            for pos in trj:
+                sid = generate_structure(utils.AtomCollection(trj.elements, pos), charge, multiplicity, model)
+                structure_ids.append(sid)
+        else:
+            raise Exception(
+                f"Missing IRC trajectory file: irc_{dir}/irc_{dir}.irc.{dir}.trj.xyz"
+            )
+
+        fpath = os.path.join(self.work_dir, f"irc_{dir}", f"irc_{dir}.opt.trj.xyz")
+        if os.path.isfile(fpath):
+            trj, _ = read_trj(fpath)
+            for pos in trj:
+                sid = generate_structure(utils.AtomCollection(trj.elements, pos), charge, multiplicity, model)
+                structure_ids.append(sid)
+
+        elementary_step.set_path(structure_ids)
+        return structure_ids

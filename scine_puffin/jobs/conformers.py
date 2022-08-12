@@ -13,7 +13,8 @@ from ..utilities import masm_helper
 class Conformers(ConnectivityJob):
     """
     A job generating all possible conformers (guesses) for a given structure
-    with molassembler.
+    with Molassembler. Currently, the structure must be a structure representing
+    a single compound and not a non-covalently bonded complex.
     The given model is used as a hint for the quality of the bond orders that
     are to be used when generating the ``molassembler`` molecule.
 
@@ -68,15 +69,10 @@ class Conformers(ConnectivityJob):
 
         import scine_database as db
         import scine_molassembler as masm
+        import math
 
         structure = db.Structure(calculation.get_structures()[0], self._structures)
         atoms = structure.get_atoms()
-
-        # Check if the structure has a compound linked
-        if structure.has_compound():
-            compound = db.Compound(structure.get_compound(), self._compounds)
-        else:
-            compound = False
 
         # Generate database results
         db_results = calculation.get_results()
@@ -99,6 +95,12 @@ class Conformers(ConnectivityJob):
             if len(results.molecules) > 1:
                 self.raise_named_exception("Too many molecules, expected only one.")
 
+            # Check if the structure has a compound linked
+            if structure.has_aggregate():
+                compound = db.Compound(structure.get_aggregate(), self._compounds)
+            else:
+                compound = None
+
             masm.Options.Thermalization.disable()
             alignment = masm.BondStereopermutator.Alignment.BetweenEclipsedAndStaggered
             generator = masm.DirectedConformerGenerator(results.molecules[0], alignment)
@@ -110,10 +112,8 @@ class Conformers(ConnectivityJob):
             multiplicity = structure.get_multiplicity()
             structures = self._structures
 
-            def store(decision_list, conformation):
+            def store(_, conformation):
                 """Enumeration callback storing the conformation in the DB"""
-                # Relabel decision_lists into binned lists
-                bin_list = generator.bin_midpoint_integers(decision_list)
                 # Update positions
                 atoms.positions = conformation
                 # New structure
@@ -122,13 +122,27 @@ class Conformers(ConnectivityJob):
                 new_id = new_structure.create(atoms, charge, multiplicity, result_model, db.Label.MINIMUM_GUESS)
                 if structure.has_graph("masm_cbor_graph"):
                     new_structure.set_graph("masm_cbor_graph", structure.get_graph("masm_cbor_graph"))
-                new_structure.set_graph("masm_decision_list", "-".join([str(i) for i in bin_list]))
+
+                relabeler = generator.relabeler()
+                # Generate dihedral angles from atom positions
+                dihedrals = relabeler.add(atoms.positions)
+                structure_bins = []
+                symmetries = []
+                for j, d in enumerate(dihedrals):
+                    symmetries.append(relabeler.sequences[j].symmetry_order)
+                    float_bounds = relabeler.make_bounds(d, 5.0 * math.pi / 180)
+                    structure_bins.append(relabeler.integer_bounds(float_bounds))
+
+                bin_strs = [masm_helper.make_bin_str(b, d, s) for b, d, s in zip(structure_bins, dihedrals, symmetries)]
+                decision_list_str = ":".join(bin_strs)
+
+                new_structure.set_graph("masm_decision_list", decision_list_str)
                 new_structure.set_comment("Conformer guess generated from " + str(structure.id()))
                 db_results.add_structure(new_id)
                 # If the structure has a compound add the new conformer
-                if compound:
+                if compound is not None:
                     compound.add_structure(new_id)
-                    new_structure.set_compound(compound.id())
+                    new_structure.set_aggregate(compound.id())
 
             enumeration_settings = generator.EnumerationSettings()
             # Stopgap until refinement with conflicting dihedral terms is more reliable

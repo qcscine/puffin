@@ -23,9 +23,6 @@ from ..resources import resource_path
 
 class ScineHessianJobTest(JobTestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @skip_without('database', 'readuct')
     def test_water(self):
         # import Job

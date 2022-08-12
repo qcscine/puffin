@@ -16,10 +16,7 @@ class Gaussian(Program):
     Setup of the Gaussian program
     """
 
-    def __init__(self, settings: dict):
-        super().__init__(settings)
-
-    def install(self, build_dir: str, install_dir: str, ncores: int):
+    def install(self, repo_dir: str, install_dir: str, ncores: int):
         if self.root:
             pass
         elif self.source:
@@ -30,9 +27,9 @@ class Gaussian(Program):
     def check_install(self):
         raise NotImplementedError
 
-    def setup_environment(self, config: Configuration, env: dict, executables: dict):
+    def setup_environment(self, config: Configuration, env_paths: dict, env_vars: dict):
         if self.root:
-            executables["GAUSSIAN_BINARY_PATH"] = os.path.join(self.root, "g09")
+            env_vars["GAUSSIAN_BINARY_PATH"] = os.path.join(self.root, "g09")
         elif self.source:
             pass
         else:

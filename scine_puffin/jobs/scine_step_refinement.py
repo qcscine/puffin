@@ -34,9 +34,9 @@ class ScineStepRefinement(ReactJob):
 
     **Required Input**
       The first up to two structures correspond to the reactants of the reaction.
-      The last structure has to be the original transition state. Furthermore, the
-      reactive sites in the complex that shall be pressed onto one another need to be
-      given using:
+      The original transition state must be given through the auxiliaries of the calculation as
+       "transition-state-id": id-of-transition state. Furthermore, the reactive sites in the complex
+      that shall be pressed onto one another need to be given using:
 
       nt_nt_associations :: int
          This specifies list of indices of atoms pairs to be forced onto
@@ -67,7 +67,7 @@ class ScineStepRefinement(ReactJob):
       The complete list prefixes for specific settings for the steps listed at
       the start of this section is:
 
-       1. Newton trajectory scan: ``nt_*`` (used exlusively for the mode selection
+       1. Newton trajectory scan: ``nt_*`` (used exclusively for the mode selection
         in the transition state optimization)
        2. TS optimization: ``tsopt_*``
        3. Validation using an IRC scan: ``irc_*``
@@ -160,7 +160,7 @@ class ScineStepRefinement(ReactJob):
             "irc": irc_defaults,
             "ircopt": ircopt_defaults,
             "opt": opt_defaults,
-            "nt": nt_defaults
+            "nt": nt_defaults,
         }
 
     @job_configuration_wrapper
@@ -171,31 +171,24 @@ class ScineStepRefinement(ReactJob):
         import scine_database as db
         # Everything that calls SCINE is enclosed in a try/except block
         with breakable(calculation_context(self)):
-            all_struc_ids = self._calculation.get_structures()
-            n_ref_strucs = len(all_struc_ids) - 1
-            all_start_ids = [all_struc_ids[i] for i in range(n_ref_strucs)]
+            settings_manager, program_helper = self.reactive_complex_preparations()
 
-            self.ref_structure = self.check_structures(all_start_ids)
-            ts_struc = db.Structure(all_struc_ids[-1], self._structures)
-            start_structures = [db.Structure(ident, self._structures) for ident in all_start_ids]
-            settings_manager, program_helper = self.create_helpers(ts_struc)
+            all_struc_ids = self._calculation.get_structures()
+            ts_struc = db.Structure(calculation.get_auxiliaries()["transition-state-id"], self._structures)
+            start_structures = [db.Structure(ident, self._structures) for ident in all_struc_ids]
             settings_manager.separate_settings(self._calculation.get_settings())
             self.sort_settings(settings_manager.task_settings)
-            """ OPT reactant(s)"""
-            initial_charge = settings_manager.calculator_settings[utils.settings_names.molecular_charge]
-            reactant_names, optimized_reactant_structures = self.optimize_reactants(start_structures, settings_manager,
-                                                                                    config)
-            self.save_initial_graphs_and_charges(settings_manager, optimized_reactant_structures)
-
             """ TSOPT JOB """
             ts_guess, keys = settings_manager.prepare_readuct_task(ts_struc,
                                                                    self._calculation,
                                                                    self._calculation.get_settings(),
                                                                    config["resources"])
+            self.systems[keys[0]] = ts_guess[keys[0]]
             self.setup_automatic_mode_selection("tsopt")
             print("TSOpt Settings:")
             print(self.settings["tsopt"], "\n")
-            self.systems, success = readuct.run_tsopt_task(ts_guess, keys, **self.settings["tsopt"])
+            self.systems, success = self.observed_readuct_call(
+                'run_tsopt_task', self.systems, keys, **self.settings["tsopt"])
             self.throw_if_not_successful(
                 success,
                 self.systems,
@@ -224,18 +217,21 @@ class ScineStepRefinement(ReactJob):
             # IRC (only a few steps to allow decent graph extraction)
             print("IRC Settings:")
             print(self.settings["irc"], "\n")
-            self.systems, success = readuct.run_irc_task(self.systems, inputs, **self.settings["irc"])
+            self.systems, success = self.observed_readuct_call(
+                'run_irc_task', self.systems, inputs, **self.settings["irc"])
             """ IRC OPT JOB """
             # Run a small energy minimization after initial IRC
             inputs = self.output("irc")
             print("IRC Optimization Settings:")
             print(self.settings["ircopt"], "\n")
-            self.systems, success = readuct.run_opt_task(self.systems, [inputs[0]], **self.settings["ircopt"])
-            self.systems, success = readuct.run_opt_task(self.systems, [inputs[1]], **self.settings["ircopt"])
+            self.systems, success = self.observed_readuct_call(
+                'run_opt_task', self.systems, [inputs[0]], **self.settings["ircopt"])
+            self.systems, success = self.observed_readuct_call(
+                'run_opt_task', self.systems, [inputs[1]], **self.settings["ircopt"])
 
             """ Check whether we have a valid IRC """
             initial_charge = settings_manager.calculator_settings[utils.settings_names.molecular_charge]
-            product_names, _ = self.irc_sanity_checks_and_analyze_sides(
+            product_names, start_names = self.irc_sanity_checks_and_analyze_sides(
                 initial_charge, self.check_charges, inputs, settings_manager.calculator_settings)
             if product_names is None:  # IRC did not pass checks, reason has been set as comment, complete job
                 self.verify_connection()
@@ -247,9 +243,19 @@ class ScineStepRefinement(ReactJob):
                 )
                 raise breakable.Break
 
+            """ Store new starting material conformer(s) """
+            if start_names is not None:
+                start_structures = self.store_start_structures(
+                    start_names, program_helper, "tsopt")
+            else:
+                start_names, start_structure_objects = self.optimize_reactants(start_structures,
+                                                                               settings_manager,
+                                                                               config)
+                start_structures = [o.id() for o in start_structure_objects]
+
             """ Save the elementary step, transition state, and product """
-            self.react_postprocessing(product_names, program_helper, "tsopt",
-                                      [struc.id() for struc in optimized_reactant_structures])
+            self.react_postprocessing(product_names, program_helper, "tsopt", start_structures)
+
         return self.postprocess_calculation_context()
 
     def optimize_reactants(self, reactant_structures, settings_manager, config):
@@ -298,9 +304,8 @@ class ScineStepRefinement(ReactJob):
             print("Optimizing " + name + " :\n")
             # Run the optimization if more than one atom is present.
             if len(self.systems[name].structure) > 1:
-                self.systems, success = readuct.run_opt_task(
-                    self.systems, [name], **self.settings["opt"]
-                )
+                self.systems, success = self.observed_readuct_call(
+                    'run_opt_task', self.systems, [name], **self.settings["opt"])
                 self.throw_if_not_successful(
                     success,
                     self.systems,
@@ -331,15 +336,11 @@ class ScineStepRefinement(ReactJob):
                 self.connectivity_settings,
                 pbc_string,
             )
+            structure_label = db.Label.MINIMUM_OPTIMIZED
             if len(masm_results.molecules) > 1:
-                self.raise_named_exception(
-                    "Error: "
-                    + self.name
-                    + " failed with message: "
-                    + "The re-optimization of the reactants lead to two molecules."
-                )
+                structure_label = db.Label.COMPLEX_OPTIMIZED
 
-            new_structure = self.create_new_structure(self.systems[name], db.Label.MINIMUM_OPTIMIZED)
+            new_structure = self.create_new_structure(self.systems[name], structure_label)
             self.transfer_properties(structure, new_structure)
             self.store_energy(self.systems[name], new_structure)
             self.store_property(

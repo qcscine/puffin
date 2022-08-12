@@ -22,9 +22,6 @@ from ..resources import resource_path
 
 class ScineBondOrdersJobTest(JobTestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @skip_without('database', 'molassembler', 'readuct')
     def test_water(self):
         # import Job

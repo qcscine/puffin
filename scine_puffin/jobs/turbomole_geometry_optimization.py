@@ -5,7 +5,7 @@ See LICENSE.txt for details.
 """
 
 import os
-from typing import Tuple
+from typing import Any, Tuple
 from scine_puffin.config import Configuration
 from .templates.job import calculation_context, TurbomoleJob, job_configuration_wrapper
 from ..utilities.turbomole_helper import TurbomoleHelper
@@ -108,7 +108,7 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
             raise RuntimeError("Structure optimization failed.")
 
     # Parse energy and extract output structure from coord file
-    def parse_results(self) -> Tuple[object, float]:
+    def parse_results(self) -> Tuple[Any, float]:
 
         import scine_utilities as utils
 
@@ -130,7 +130,7 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
                 stdout_tofile=True,
             )
             os.rename("t2x.out", self.trajectory)
-            optimized_structure, bonds = utils.io.read(self.output_structure)
+            optimized_structure, _ = utils.io.read(self.output_structure)
             return optimized_structure, parsed_energy
         else:
             raise RuntimeError

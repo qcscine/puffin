@@ -5,7 +5,7 @@ Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
 See LICENSE.txt for details.
 """
 
-from typing import Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import math
 
 import scine_database as db
@@ -18,8 +18,9 @@ def get_molecules_result(
     bond_orders: utils.BondOrderCollection,
     connectivity_settings: Dict[str, Union[bool, int]],
     pbc_string: str = "",
-    unimportant_atoms: Union[List[int], None] = None,
-):
+    unimportant_atoms: Union[List[int], Set[int], None] = None,
+    modifications: Optional[List[Tuple[int, int, float]]] = None,
+) -> masm.interpret.MoleculesResult:
     """
     Generates the molassembler molecules interpretation of an atom
     collection and a bond order collection optionally made subject
@@ -38,6 +39,9 @@ def get_molecules_result(
         The string specifying periodic boundaries, empty string represents no periodic boundaries.
     unimportant_atoms :: Union[List[int], None]
         The indices of atoms for which no stereopermutators shall be determined.
+    modifications :: Optional[List[Tuple[int, int, float]]]
+        Manual bond modifications. They are specified as a list with each element containing the
+        indices and the new bond order between those two indices
 
     Returns
     -------
@@ -46,6 +50,7 @@ def get_molecules_result(
 
     """
     ignored_atoms = set() if unimportant_atoms is None else set(unimportant_atoms)
+
     consider_distance_connectivity = bool(
         connectivity_settings["sub_based_on_distance_connectivity"]
         or connectivity_settings["add_based_on_distance_connectivity"]
@@ -56,9 +61,15 @@ def get_molecules_result(
             bo = ps.construct_bond_orders()
             bo.set_to_absolute_values()
             new_bos = _modify_based_on_distances(atoms, bo, bond_orders, connectivity_settings)
+            if modifications is not None:
+                for mod in modifications:
+                    new_bos.set_order(*mod)
             ps.make_bond_orders_across_boundaries_negative(bond_orders)
             data = ps.get_data_for_molassembler_interpretation(new_bos)
         else:
+            if modifications is not None:
+                for mod in modifications:
+                    bond_orders.set_order(*mod)
             ps.make_bond_orders_across_boundaries_negative(bond_orders)
             data = ps.get_data_for_molassembler_interpretation(bond_orders)
         return masm.interpret.molecules(*data, masm.interpret.BondDiscretization.Binary)
@@ -69,6 +80,10 @@ def get_molecules_result(
             atoms, distance_bos, bond_orders, connectivity_settings)
     else:
         connectivity_bo_collection = bond_orders
+
+    if modifications is not None:
+        for mod in modifications:
+            connectivity_bo_collection.set_order(*mod)
 
     return masm.interpret.molecules(
         atoms,
@@ -122,7 +137,7 @@ def get_cbor_graph_from_molecule(molecule: masm.Molecule):
         exception_str = "Irreversible serialization/deserialization pair: " + str(e)
         print("Non-canonical molecule serialization:")
         print(masm.JsonSerialization(molecule))
-        raise RuntimeError(exception_str)
+        raise RuntimeError(exception_str) from e
 
     binary = serialization.to_binary(masm.JsonSerialization.BinaryFormat.CBOR)
     cbor_string = masm.JsonSerialization.base_64_encode(binary)
@@ -136,7 +151,7 @@ def get_cbor_graph(
     connectivity_settings: Dict[str, Union[bool, int]],
     pbc_string: str = "",
     unimportant_atoms: Union[List[int], None] = None,
-):
+) -> str:
     """
     Generates the CBOR graph of an atom collection and bond order collection.
     Multiple graphs are concatenated with ";" as a deliminator.
@@ -170,6 +185,12 @@ def get_cbor_graph(
     return ";".join(graph)
 
 
+def make_bin_str(int_bounds: Tuple[int, int], dihedral: float, sym: int) -> str:
+    """Turn integer bounds and a floating dihedral into a joint string"""
+    int_dihedral = int(0.5 + 180 * dihedral / math.pi)
+    return "({}, {}, {}, {})".format(int_bounds[0], int_dihedral, int_bounds[1], sym)
+
+
 def get_decision_list_from_molecule(molecule: masm.Molecule, atoms: utils.AtomCollection) -> str:
     """
     Generates the dihedral decision list for rotatable bonds in a single molecule.
@@ -186,10 +207,6 @@ def get_decision_list_from_molecule(molecule: masm.Molecule, atoms: utils.AtomCo
     masm_decision_list :: str
         The dihedral decision list for rotatable bonds.
     """
-    def make_bin_str(int_bounds: Tuple[int, int], dihedral: float, sym: int) -> str:
-        """Turn integer bounds and a floating dihedral into a joint string"""
-        int_dihedral = int(0.5 + 180 * dihedral / math.pi)
-        return "({}, {}, {}, {})".format(int_bounds[0], int_dihedral, int_bounds[1], sym)
 
     # Infer decision list from positions and store it
     alignment = masm.BondStereopermutator.Alignment.EclipsedAndStaggered
@@ -279,7 +296,7 @@ def add_masm_info(
     # Split the atom collection into separate collections for each molecule
     positions = masm_results.component_map.apply(atoms)
 
-    properties = [{"component": i} for i in range(len(masm_results.molecules))]
+    properties: List[Dict[str, Any]] = [{"component": i} for i in range(len(masm_results.molecules))]
     atom_map = [tuple(masm_results.component_map.apply(i)) for i in range(len(atoms))]
 
     for i, m in enumerate(masm_results.molecules):
@@ -294,11 +311,6 @@ def add_masm_info(
         binary = serialization.to_binary(masm.JsonSerialization.BinaryFormat.CBOR)
         b64_str = masm.JsonSerialization.base_64_encode(binary)
         properties[i]["serialization"] = b64_str
-
-    def make_bin_str(int_bounds: Tuple[int, int], dihedral: float, sym: int) -> str:
-        """Turn integer bounds and a floating dihedral into a joint string"""
-        int_dihedral = int(0.5 + 180 * dihedral / math.pi)
-        return "({}, {}, {}, {})".format(int_bounds[0], int_dihedral, int_bounds[1], sym)
 
     # Infer decision list from positions and store it
     for i, (m, p) in enumerate(zip(masm_results.molecules, positions)):

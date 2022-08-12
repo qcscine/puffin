@@ -52,7 +52,7 @@ class ScineJob(Job):
         for Parent in self.__class__.__bases__:
             if "expected_results" in dir(Parent):
                 parent = Parent()
-                parent_expects += parent.expected_results()
+                parent_expects += parent.expected_results()  # pylint: disable=no-member
         return list(set(parent_expects + self.own_expected_results))
 
     @staticmethod
@@ -91,7 +91,7 @@ class ScineJob(Job):
         Raises an error including the name/description of the current job.
         """
         error_begin = "Error: " + self.name + " failed with message:\n"
-        raise Exception(error_begin + error_message)
+        raise BaseException(error_begin + error_message)
 
     def throw_if_not_successful(
         self,
@@ -128,13 +128,11 @@ class ScineJob(Job):
         if sub_task_error_line:
             error_begin += sub_task_error_line
         if not success:
-            error = open(self.stderr_path).read()
-            error_message = self._fallback_error if not error else error_begin + error
             error_message = self.expected_results_check(
                 systems, keys, expected_results
             )[1]
             error_message = error_begin + error_message
-            raise Exception(error_message)
+            raise BaseException(error_message)
 
     def calculation_postprocessing(
         self,
@@ -171,6 +169,8 @@ class ScineJob(Job):
         )  # check results
         if not results_check:
             self.raise_named_exception(results_error)
+        if not success:
+            self.raise_named_exception(self._fallback_error)
         update_model(
             systems[keys[0]], self._calculation, self.config
         )  # calculation is safe -> update model
