@@ -100,12 +100,20 @@ class Configuration:
         not, a unique ID will automatically be generated.
       pid :: str
         The path to the file identifying the PID of the Puffin instance.
+        Automatically populated on start-up if left empty.
+      pid_dir :: str
+        The path to a folder holding the file identifying the PID of the Puffin instance.
       log :: str
         The path to the logfile of the Puffin instance.
       stop :: str
         The path to a file that if existent will prompt the Puffin instance to
         stop taking new jobs and shut down instead. The instance will finish any
         running job though.
+      remove_stop_file :: bool
+        Upon finding a stop file the daemon will stop, if this option is set to
+        ``True`` the found file will be deleted allowing instant restarts.
+        In cases where multiple puffins depend on the same stop file it may be
+        required to keep the stop file, setting this option to ``False``
       cycle_time_in_s :: float
         The time in between scans of the database for new jobs that can be run.
       timeout_in_h :: float
@@ -209,10 +217,12 @@ class Configuration:
             "software_dir": "/scratch/puffin/software",
             "error_dir": "",
             "archive_dir": "",
-            "uuid": "puffin-" + uuid.uuid1().hex,
-            "pid": "/scratch/puffin/puffin.pid",
+            "uuid": "",
+            "pid": "",
+            "pid_dir": "/scratch/puffin/",
             "log": "/scratch/puffin/puffin.log",
             "stop": "/scratch/puffin/puffin.stop",
+            "remove_stop_file": True,
             "cycle_time_in_s": 10.0,
             "timeout_in_h": 48.0,
             "touch_time_in_s": 1500.0,
@@ -220,14 +230,14 @@ class Configuration:
             "idle_timeout_in_h": -1.0,
             "max_number_of_jobs": -1,
             "repeated_failure_stop": 100,
-            "enforce_memory_limit": True
+            "enforce_memory_limit": True,
         }
         self._data["programs"] = {
             "readuct": {
                 "available": True,
                 "source": "https://github.com/qcscine/readuct.git",
                 "root": "",
-                "version": "master",
+                "version": "5.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -236,7 +246,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/utilities.git",
                 "root": "",
-                "version": "master",
+                "version": "8.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -245,7 +255,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/database.git",
                 "root": "",
-                "version": "master",
+                "version": "1.2.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -254,7 +264,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/sparrow.git",
                 "root": "",
-                "version": "master",
+                "version": "4.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -263,7 +273,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/molassembler.git",
                 "root": "",
-                "version": "master",
+                "version": "2.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -299,7 +309,7 @@ class Configuration:
                 "available": False,
                 "source": "https://github.com/qcscine/serenity_wrapper.git",
                 "root": "",
-                "version": "master",
+                "version": "2.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -314,7 +324,7 @@ class Configuration:
                 "available": False,
                 "source": "https://github.com/qcscine/xtb_wrapper.git",
                 "root": "",
-                "version": "master",
+                "version": "2.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -323,7 +333,7 @@ class Configuration:
                 "available": False,
                 "source": "https://github.com/qcscine/kinetx.git",
                 "root": "",
-                "version": "master",
+                "version": "2.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -408,7 +418,7 @@ class Configuration:
         with open(path, "w") as outfile:
             yaml.dump(self._data, outfile, default_flow_style=False)
 
-    def load(self, path: str = None):
+    def load(self, path: Optional[str] = None):
         """
         Loads the configuration. The configuration is initialized using the
         default values, then all settings given in the file (if there is one)
@@ -468,11 +478,18 @@ class Configuration:
                     ) from e
                 reduce(operator.getitem, key_chain[:-1], self._data)[key_chain[-1]] = value
 
-        # Generate uuid if none exists
+        # Generate uuid of specified type if unset
         if not self._data["daemon"]["uuid"] or self._data["daemon"]["uuid"] == "uuid1":
             self._data["daemon"]["uuid"] = "puffin-" + uuid.uuid1().hex
         elif self._data["daemon"]["uuid"] == "uuid4":
             self._data["daemon"]["uuid"] = "puffin-" + uuid.uuid4().hex
+
+        # Generate pid file path
+        if not self._data["daemon"]["pid"]:
+            self._data["daemon"]["pid"] = os.path.join(
+                self._data["daemon"]["pid_dir"],
+                f'{self._data["daemon"]["uuid"]}.pid'
+            )
 
     def _apply_changes(self, to_dict: dict, from_dict: dict):
         """

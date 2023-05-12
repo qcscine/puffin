@@ -102,7 +102,7 @@ class ScineConceptualDft(ScineJob):
             for element in elements:
                 n_electrons += utils.ElementInfo.Z(element)
             if charge >= n_electrons:
-                raise Exception("At least one electron required to calculate cDFT properties.")
+                raise RuntimeError("At least one electron required to calculate cDFT properties.")
 
             charge_plus = charge - 1
             charge_minus = charge + 1

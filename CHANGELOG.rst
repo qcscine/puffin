@@ -1,6 +1,19 @@
 Changelog
 =========
 
+Release 1.2.0
+-------------
+
+New Features:
+    - Add a mechanism to stop multiple Puffins
+    - Generate PID based on UUID, allowing to run multiple Puffins on the same filesystem
+
+New Jobs:
+    - Double ended reaction step refinement.
+
+Further changes:
+    - Various bugfixes and improvements
+
 Release 1.1.0
 -------------
 

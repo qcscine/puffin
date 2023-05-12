@@ -34,6 +34,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         self.rc_key = "rc"
         self.job_key = "job"
         self.rc_opt_system_name = "rcopt"
+        self.single_point_key = "sp"
         # to be extended by child:
         self.settings: Dict[str, Dict[str, Any]] = {
             self.job_key: {
@@ -55,8 +56,22 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 "stop_on_error": False,
                 "convergence_max_iterations": 500,
                 "geoopt_coordinate_system": "cartesianWithoutRotTrans",
+            },
+            self.single_point_key: {
+                "expect_charge_separation": False,
+                "charge_separation_threshold": 0.4
             }
         }
+        """
+        expect_charge_separation : If true, fragment charges are no longer determined by rounding, i.e, if a product
+        consists of multiple molecules (according to its graph), the charges are determined initially by rounding.
+        However, then the residual (the difference of the integrated charge to the rounded one) is checked against
+        <charge_separation_threshold>. If this residual exceeds the charge separation threshold, the charge is
+        increased/lowered by one according to its sign. This is especially useful if a clear charge separation only
+        occurs upon separation of the molecules which is often the case for DFT-based descriptions of the electronic
+        structure.
+        charge_separation_threshold : The threshold for the charge separation (vide supra).
+        """
         self.start_graph = ""
         self.end_graph = ""
         self.start_charges = []
@@ -584,7 +599,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
 
         Returns
         -------
-        split_structures :: List[utils.AtomCollection]
+        ordered_structures :: List[utils.AtomCollection]
             List of atom collections corresponding to the split molecules.
         graph_string :: str
             Sorted molassembler cbor graphs separated by semicolons.
@@ -630,35 +645,8 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             partial_charges = self.systems[name].get_results().atomic_charges
             self.systems[name].get_results().bond_orders = bond_orders
 
-        charges = []
-        n_electrons = []
-        for i in range(len(split_structures)):
-            charges.append(0.0)
-        for i, c in zip(masm_results.component_map, partial_charges):
-            charges[i] += c
-        residual = []
-        for i in range(len(split_structures)):
-            residual.append(charges[i] - round(charges[i]))
-            charges[i] = int(round(charges[i]))
-
-        # Check if electrons were created or vanished by virtue of rounding
-        electron_diff = int(round(sum(charges) - total_charge))
-        if electron_diff < 0:
-            # Remove electrons if need be
-            max_charge_vals = np.array(charges).argsort()[-electron_diff:]
-            for i in max_charge_vals:
-                charges[i] += 1
-        elif electron_diff > 0:
-            # Add electrons if need be
-            min_charge_vals = np.array(charges).argsort()[:electron_diff]
-            for i in min_charge_vals:
-                charges[i] -= 1
-        for i in range(len(split_structures)):
-            electrons = 0.0
-            for elem in split_structures[i].elements:
-                electrons += utils.ElementInfo.Z(elem)
-            electrons -= charges[i]
-            n_electrons.append(int(round(electrons)))
+        charges, n_electrons, _ = self._integrate_charges(masm_results.component_map, partial_charges,
+                                                          split_structures, total_charge)
 
         # This assumes minimal multiplicity, product multiplicities are again checked later around this multiplicity
         multiplicities = [nel % 2 + 1 for nel in n_electrons]
@@ -678,6 +666,154 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         ordered_structures = [split_structures[i] for i in structure_order]
 
         return ordered_structures, graph_string, charges, multiplicities, decision_lists
+
+    @staticmethod
+    def _custom_round(number: float, threshold=0.5) -> float:
+        """
+        Rounding number up or down depending on the threshold.
+        To round down, delta must be smaller than the threshold.
+
+        Parameters
+        ----------
+        number : float
+            Number which should be rounded.
+        threshold : float, optional
+            Threshold when to round up, by default 0.5
+
+        Returns
+        -------
+        float
+            Number rounded according to threshold.
+        """
+        sign = np.copysign(1.0, number)
+        number = abs(number)
+        delta = number - np.trunc(number)
+        if delta < threshold:
+            return np.trunc(number) * sign
+        else:
+            return (np.trunc(number) + 1) * sign
+
+    @staticmethod
+    def _calculate_residual(original_values: List[Any], new_values: List[Any]) -> List[float]:
+        """
+        Calculate the residual where one subtracts new from old values.
+
+        Parameters
+        ----------
+        original_values : List[float]
+            A list of old values.
+        new_values : List[float]
+            A list of new values.
+
+        Returns
+        -------
+        residual : List[float]
+            The list of differences between old and new.
+        """
+        residual = []
+        for i in range(len(original_values)):
+            residual.append(original_values[i] - new_values[i])
+        return residual
+
+    def _distribute_charge(
+            self,
+            total_charge: float,
+            charge_guess,
+            summed_partial_charges: List[float]) -> List[int]:
+        """
+        Check if the sum of the charges of the non-bonded molecules equals the total charge of the supersystem.
+        If this should not be the case, add or remove one charge, depending on the difference between the total charge
+        and the sum of the charge guess.
+        A charge is added where the residual between the partial charges and the charge guess (partial - guess)
+        is maximal and subtracted where it is minimal.
+        The re-evaluated after the charge guess was modified.
+
+        Parameters
+        ----------
+        total_charge : float
+            Total charge of the supersystem.
+        charge_guess : List[int]
+            List of guessed charges for each molecule in the supersystem.
+        summed_partial_charges : List[float]
+            List of the sum over the partial charges of the non-bonded molecules in the supersystem.
+
+        Returns
+        -------
+            charge_guess : List[float]
+                The updated list of guessed charges where the sum equals the total charge of the supersystem.
+        """
+        residual = self._calculate_residual(summed_partial_charges, charge_guess)
+        while (sum(charge_guess) != total_charge):
+            charge_diff = sum(charge_guess) - total_charge
+            # too many electrons, add a charge
+            if charge_diff < 0.0:
+                # Add one charge to selection
+                charge_guess[np.argmax(residual)] += 1
+            # too little electrons, remove a charge
+            else:
+                # Substract one charge from selection
+                charge_guess[np.argmin(residual)] -= 1
+            # Update residual
+            residual = self._calculate_residual(summed_partial_charges, charge_guess)
+        # return updated charge guess
+        return charge_guess
+
+    def _integrate_charges(self, component_map: List[int], partial_charges: List[float],
+                           split_structures, total_charge: float) -> Tuple[List[int], List[int], List[float]]:
+        """
+        Determine the charges, the number of electrons and the residual to the partial charges per molecule of
+        the non-bonded molecules in the supersystem.
+
+        Parameters
+        ----------
+        component_map : List[int]
+            List of indices to map atoms to the molecule it belongs according to molassembler.
+        partial_charges : List[float]
+            The partial charges of the atoms.
+        split_structures : List[utils.AtomCollection]
+            The non-bonded molecules in the supersystem.
+        total_charge : List[utils.AtomCollection]
+            The total charge of the supersystem.
+
+        Returns
+        -------
+        charges : List[int]
+            The charges for each non-bonded molecule in the supersystem.
+        n_electrons : List[int]
+            The number of electrons for each non-bonded molecule in the supersystem.
+        residual : List[float]
+            The difference between the original sum of partial charges and
+            the determined charges per non-bonded molecule in the supersystem.
+
+        """
+        import scine_utilities as utils
+        charges = []
+        n_electrons = []
+        for i in range(len(split_structures)):
+            charges.append(0.0)
+        for i, c in zip(component_map, partial_charges):
+            charges[i] += c
+        summed_partial_charges = deepcopy(charges)
+        print("Charge separation check " + str(self.settings[self.single_point_key]["expect_charge_separation"]))
+        # Update charges to charge guess, only containing ints
+        for i in range(len(split_structures)):
+            if not self.settings[self.single_point_key]["expect_charge_separation"]:
+                charges[i] = int(self._custom_round(charges[i], 0.5))
+            else:
+                charges[i] = int(self._custom_round(charges[i],
+                                 self.settings[self.single_point_key]["charge_separation_threshold"]))
+
+        # Check and re-distribute if necessary
+        updated_charges = self._distribute_charge(total_charge, charges, summed_partial_charges)
+        # Update number of electrons
+        for i in range(len(split_structures)):
+            electrons = 0
+            for elem in split_structures[i].elements:
+                electrons += utils.ElementInfo.Z(elem)
+            electrons -= updated_charges[i]
+            n_electrons.append(int(round(electrons)))
+        residual = self._calculate_residual(summed_partial_charges, updated_charges)
+        return updated_charges, n_electrons, residual
 
     def check_for_barrierless_reaction(self):
         """
@@ -810,6 +946,9 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             backward_decision_lists,
         ) = self.get_graph_charges_multiplicities(inputs[1], initial_charge)
 
+        print("Forward charges: " + str(forward_charges))
+        print("Backward charges: " + str(backward_charges))
+
         # Optimize separated forward molecules
         forward_names = self.optimize_structures("forward", forward_structures,
                                                  forward_charges,
@@ -919,13 +1058,11 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             new_decision_lists = forward_decision_lists
         else:
             new_decision_lists = backward_decision_lists
-
         decision_lists_match: bool = True
         for new, orig in zip(new_decision_lists, original_decision_lists):
             if not masm.JsonSerialization.equal_decision_lists(new, orig):
                 decision_lists_match = False
                 break
-
         if not decision_lists_match:
             if self.step_direction == "backward":
                 start_names = forward_names
@@ -933,7 +1070,6 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 start_names = backward_names
         else:
             start_names = None
-
         # additional check for double ended methods
         if self.end_graph:
             if (
@@ -951,7 +1087,6 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             else:
                 self._calculation.set_comment(self.name + ": IRC does not match double ended method")
                 return None, None
-
         # Check if complexations need to be tracked
         forward_complexation_energy = 0.0
         for name in forward_names:
@@ -971,7 +1106,6 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 self.rhs_complexation = True
             else:
                 self.lhs_complexation = True
-
         return product_names, start_names
 
     def optimize_structures(
@@ -1036,7 +1170,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                     **structure_calculator_settings,
                 )
                 self.systems[name] = new
-            except BaseException as e:
+            except RuntimeError as e:
                 if stop_on_error:
                     raise e
                 sys.stderr.write(f"{name} cannot be calculated because: {str(e)}")
@@ -1080,7 +1214,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                     ["energy", "bond_orders"],
                     f"{name_stub.capitalize()} optimization failed:\n",
                 )
-            except BaseException as e:
+            except RuntimeError as e:
                 if stop_on_error:
                     raise e
                 sys.stderr.write(f"{structure} cannot be calculated because: {str(e)}")
@@ -1155,7 +1289,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             for pos, e in zip(reversed(trj), reversed(energies)):
                 rpi.append_structure(utils.AtomCollection(trj.elements, pos), e)
         else:
-            raise Exception(
+            raise RuntimeError(
                 f"Missing IRC trajectory file: irc_{rev_dir}/irc_{rev_dir}.irc.{rev_dir}.trj.xyz"
             )
 
@@ -1166,7 +1300,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             ts_xyz, _ = utils.io.read(fpath)
             rpi.append_structure(ts_xyz, results.energy, True)
         else:
-            raise Exception("Missing TS structure file: ts/ts.xyz")
+            raise RuntimeError("Missing TS structure file: ts/ts.xyz")
 
         fpath = os.path.join(
             self.work_dir, f"irc_{dir}", f"irc_{dir}.irc.{dir}.trj.xyz"
@@ -1176,7 +1310,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             for pos, e in zip(trj, energies):
                 rpi.append_structure(utils.AtomCollection(trj.elements, pos), e)
         else:
-            raise Exception(
+            raise RuntimeError(
                 f"Missing IRC trajectory file: irc_{dir}/irc_{dir}.irc.{dir}.trj.xyz"
             )
 
@@ -1194,7 +1328,8 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         self,
         start_structure_names: List[str],
         program_helper: Union[ProgramHelper, None],
-        tsopt_task_name: str
+        tsopt_task_name: str,
+        start_structures: Optional[List[Any]] = None
     ):
         """
         Store the new start systems system in the database.
@@ -1211,6 +1346,9 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             The ProgramHelper which might also want to do postprocessing
         tsopt_task_name :: str
             The name of the task where the TS was output
+        start_structures :: Optional[List[db.ID]]
+            Optional list of the starting structure ids. If no list is given. The input
+            structures of the calculation are used.
 
         Returns
         -------
@@ -1218,6 +1356,9 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             A list of the database IDs of the start structures.
         """
         import scine_database as db
+
+        if start_structures is None:
+            start_structures = self._calculation.get_structures()
 
         # Update model to make sure there are no 'any' values left
         update_model(
@@ -1232,7 +1373,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
             duplicate: Optional[db.ID] = None
             dl = ';'.join(self.make_decision_lists_from_calc(self.systems, name))
             graph = self.make_graph_from_calc(self.systems, name)
-            for initial_id in self._calculation.get_structures():
+            for initial_id in start_structures:
                 initial_structure = db.Structure(initial_id)
                 initial_structure.link(self._structures)
                 initial_graph = initial_structure.get_graph("masm_cbor_graph")
@@ -1249,9 +1390,15 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 for existing_structure_id in existing_structures:
                     existing_structure = db.Structure(existing_structure_id)
                     existing_structure.link(self._structures)
+                    if existing_structure.get_label() in \
+                            [db.Label.DUPLICATE, db.Label.MINIMUM_GUESS, db.Label.USER_GUESS]:
+                        continue
                     existing_structure_dl = existing_structure.get_graph("masm_decision_list")
                     if masm.JsonSerialization.equal_decision_lists(dl, existing_structure_dl):
                         duplicate = existing_structure_id
+                        break
+                if duplicate is not None:
+                    break
             if duplicate is not None:
                 start_structure_ids.append(duplicate)
                 continue
@@ -1491,6 +1638,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
         # intermediate function may have written directly to calculation
         #   results, therefore add to already existing
         self._calculation.set_results(self._calculation.get_results() + db_results)
+        return main_step_lhs, main_step_rhs
 
     def save_mep_in_db(self, elementary_step, charge, multiplicity, model):
         """
@@ -1503,8 +1651,15 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
 
         Parameters
         ----------
-        tsopt_task_name :: str
-            Name of the transition state task.
+        elementary_step :: scine_database.ElementaryStep
+            The elementary step of which to store the MEP.
+        charge :: int
+            The total charge of the system.
+        multiplicity :: int
+            The spin multiplicity of the system.
+        model :: scine_database.Model
+            The model with which all energies in the elementary Step were
+            calculated.
         """
         import scine_utilities as utils
         import scine_database as db
@@ -1563,7 +1718,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 sid = generate_structure(utils.AtomCollection(trj.elements, pos), charge, multiplicity, model)
                 structure_ids.append(sid)
         else:
-            raise Exception(
+            raise RuntimeError(
                 f"Missing IRC trajectory file: irc_{rev_dir}/irc_{rev_dir}.irc.{rev_dir}.trj.xyz"
             )
 
@@ -1578,7 +1733,7 @@ class ReactJob(OptimizationJob, HessianJob, ConnectivityJob):
                 sid = generate_structure(utils.AtomCollection(trj.elements, pos), charge, multiplicity, model)
                 structure_ids.append(sid)
         else:
-            raise Exception(
+            raise RuntimeError(
                 f"Missing IRC trajectory file: irc_{dir}/irc_{dir}.irc.{dir}.trj.xyz"
             )
 

@@ -133,6 +133,9 @@ class Job:
         archive :: str
             The path to move the resulting tarball to.
         """
+        if not os.path.exists(self.work_dir):
+            sys.stderr.write(f"The job directory {self.work_dir} does not exist, cannot archive.\n")
+            return
         basedir = os.path.dirname(self.work_dir)
         # Tar the folder
         tar_gen_path = os.path.join(basedir, self._id.string() + ".tar.gz")
@@ -148,6 +151,9 @@ class Job:
         """
         Clears the directory in which the job was run.
         """
+        if not os.path.exists(self.work_dir):
+            sys.stderr.write(f"The job directory {self.work_dir} does not exist, cannot remove anything.\n")
+            return
         shutil.rmtree(self.work_dir)
 
     def verify_connection(self):
@@ -537,11 +543,17 @@ def calculation_context(job: Job, stdout_name="output", stderr_name="errors", de
         # Do nothing while in debug mode
         prevdir = os.getcwd()
         os.chdir(os.path.expanduser(workdir))
-        with open(job.stdout_path, "w") as stdout, open(job.stderr_path, "w") as stderr:
-            yield
+        try:
+            with open(job.stdout_path, "w") as stdout, open(job.stderr_path, "w") as stderr:
+                yield
+                with open(job.success_file(), "w"):
+                    pass
+            os.chdir(prevdir)
+        except breakable.Break:
             with open(job.success_file(), "w"):
                 pass
-        os.chdir(prevdir)
+            os.chdir(prevdir)
+
     else:
         # Previous directory
         prevdir = os.getcwd()

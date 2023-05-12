@@ -18,6 +18,7 @@ from ..db_setup import (
     add_reaction,
     add_flask_and_structure
 )
+from ...utilities.compound_and_flask_helpers import get_compound_or_flask
 
 
 class KinetxKineticModelingJobTest(JobTestCase):
@@ -82,10 +83,13 @@ class KinetxKineticModelingJobTest(JobTestCase):
 
         # Check results
         properties = self.manager.get_collection("properties")
+        reactions = self.manager.get_collection("reactions")
         structures = self.manager.get_collection("structures")
+        compounds = self.manager.get_collection("compounds")
+        flasks = self.manager.get_collection("flasks")
         results = calculation.get_results()
-        assert properties.count(dumps({})) == n_compounds * 3
-        assert len(results.property_ids) == n_compounds * 3
+        assert properties.count(dumps({})) == n_compounds * 3 + len(all_reaction_ids) * 3
+        assert len(results.property_ids) == n_compounds * 3 + len(all_reaction_ids) * 3
         assert len(results.structure_ids) == 0
         assert len(results.elementary_step_ids) == 0
         for c in all_compounds:
@@ -101,3 +105,15 @@ class KinetxKineticModelingJobTest(JobTestCase):
             self.assertAlmostEqual(final_concentration.get_data(), reference_data[i], delta=1e-2)
             self.assertAlmostEqual(max_concentration.get_data(), reference_max[i], delta=1e-2)
             self.assertAlmostEqual(concentration_flux.get_data(), reference_flux[i], delta=1e-1)
+
+        for r_id in all_reaction_ids:
+            total_flux_label = r_id.string() + "_reaction_edge_flux"
+            forward_flux_label = r_id.string() + "_forward_edge_flux"
+            backward_flux_label = r_id.string() + "_backward_edge_flux"
+            a_id = db.Reaction(r_id, reactions).get_reactants(db.Side.LHS)[0][0]
+            a_type = db.Reaction(r_id, reactions).get_reactant_types(db.Side.LHS)[0][0]
+            aggregate = get_compound_or_flask(a_id, a_type, compounds, flasks)
+            centroid = aggregate.get_centroid(self.manager)
+            assert centroid.has_property(total_flux_label)
+            assert centroid.has_property(forward_flux_label)
+            assert centroid.has_property(backward_flux_label)

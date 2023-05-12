@@ -6,13 +6,12 @@ See LICENSE.txt for details.
 """
 
 import argparse
-import signal
 import sys
 from typing import Union
 from .bootstrap import bootstrap
 from .config import Configuration
-from .daemon import start_daemon, stop_daemon
-from .jobloop import check_setup, loop, kill_daemon
+from .daemon import start_daemon, stop_daemon, check_environment
+from .jobloop import kill_daemon
 
 
 def setup_config(args: argparse.Namespace) -> Configuration:
@@ -121,15 +120,8 @@ def container(config: Union[None, Configuration] = None):
         config = setup_config(parse_arguments())
     print("")
     print("Running with UUID: " + config["daemon"]["uuid"])
-    available_jobs = check_setup(config)
-
-    def exit_gracefully(*args, **kwargs):
-        print("Puffin shutting down gracefully")
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, exit_gracefully)
-    signal.signal(signal.SIGTERM, exit_gracefully)
-    loop(config, available_jobs)
+    check_environment(config)
+    start_daemon(config, detach=False)
 
 
 def main():

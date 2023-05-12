@@ -12,5 +12,6 @@ pylint
 pylint-exit
 autopep8
 flake8
+autoflake
 mypy
 types-PyYAML

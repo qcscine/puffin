@@ -25,22 +25,40 @@ def bootstrap(config: Configuration):
     initial_dir = os.getcwd()
     jobs = config.daemon()["job_dir"]
     if jobs and not os.path.exists(jobs):
-        os.makedirs(jobs)
+        try:
+            os.makedirs(jobs)
+        except FileExistsError:
+            pass
     software = config.daemon()["software_dir"]
     if software and not os.path.exists(software):
-        os.makedirs(software)
+        try:
+            os.makedirs(software)
+        except FileExistsError:
+            pass
     build_dir = os.path.join(software, "build")
     if build_dir and not os.path.exists(build_dir):
-        os.makedirs(build_dir)
+        try:
+            os.makedirs(build_dir)
+        except FileExistsError:
+            pass
     install_dir = os.path.join(software, "install")
     if install_dir and not os.path.exists(install_dir):
-        os.makedirs(install_dir)
+        try:
+            os.makedirs(install_dir)
+        except FileExistsError:
+            pass
     archive_dir = config.daemon()["archive_dir"]
     if archive_dir and not os.path.exists(archive_dir) and archive_dir:
-        os.makedirs(archive_dir)
+        try:
+            os.makedirs(archive_dir)
+        except FileExistsError:
+            pass
     error_dir = config.daemon()["error_dir"]
     if error_dir and not os.path.exists(error_dir) and error_dir:
-        os.makedirs(error_dir)
+        try:
+            os.makedirs(error_dir)
+        except FileExistsError:
+            pass
 
     # Install minimal requirement
     print("")

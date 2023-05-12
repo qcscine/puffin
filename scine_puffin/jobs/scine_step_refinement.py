@@ -184,7 +184,6 @@ class ScineStepRefinement(ReactJob):
                                                                    self._calculation.get_settings(),
                                                                    config["resources"])
             self.systems[keys[0]] = ts_guess[keys[0]]
-            self.setup_automatic_mode_selection("tsopt")
             print("TSOpt Settings:")
             print(self.settings["tsopt"], "\n")
             self.systems, success = self.observed_readuct_call(

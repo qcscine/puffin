@@ -47,7 +47,8 @@ setup(
     long_description=readme,
     url="https://www.scine.ethz.ch",
     python_requires=">={}".format(".".join(str(n) for n in min_version)),
-    packages=find_packages(exclude=["docs", "tests"]),
+    packages=find_packages(include=["scine_puffin", "scine_puffin.*"],
+                           exclude=["scine_puffin.tests*"]),
     include_package_data=True,
     package_data={
         "scine_puffin": [

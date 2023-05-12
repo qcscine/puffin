@@ -14,7 +14,7 @@ import random
 import traceback
 from datetime import datetime, timedelta
 from importlib import import_module, util
-from typing import Dict, List
+from typing import Any, Dict, List
 from json import dumps
 from .config import Configuration
 
@@ -79,18 +79,21 @@ def slow_connect(manager, config: Configuration) -> None:
 
 def kill_daemon(config: Configuration) -> None:
     """
-    Kills the Puffin instantaneously without any possibility of a graceful
-    exit.
+    Kills the Puffin instantaneously without any possibility of a graceful exit.
 
     Parameters
-    ----------.
+    ----------
     config :: scine_puffin.config.Configuration
-       The current configuration of the Puffin.
+        The current configuration of the Puffin.
     """
     # Remove stop file if present
-    stop_file = config.daemon()["stop"]
-    if os.path.isfile(stop_file):
-        os.remove(stop_file)
+    if config.daemon()["remove_stop_file"]:
+        stop_file = config.daemon()["stop"]
+        if os.path.isfile(stop_file):
+            try:
+                os.remove(stop_file)
+            except FileNotFoundError:
+                pass
 
     # Kill the daemon process
     pid_file = config["daemon"]["pid"]
@@ -103,6 +106,7 @@ def kill_daemon(config: Configuration) -> None:
     if os.path.isfile(pid_file):
         with open(pid_file, "r") as f:
             pid = int(f.readline().strip())
+        os.remove(pid_file)
         parent = psutil.Process(pid)
         for child in parent.children(recursive=True):
             child.kill()
@@ -137,9 +141,9 @@ def loop(config: Configuration, available_jobs: dict) -> None:
 
     # Generate shared variable
     # Shared variables have to be ctypes so this is a bit ugly
-    JOB = multiprocessing.Array(ctypes.c_char, 200)
+    JOB: Any = multiprocessing.Array(ctypes.c_char, 200)
     JOB.value = "".encode("utf-8")
-    CURRENT_DB = multiprocessing.Array(ctypes.c_char, 200)
+    CURRENT_DB: Any = multiprocessing.Array(ctypes.c_char, 200)
     CURRENT_DB.value = manager.get_database_name().encode("utf-8")
 
     # Run the loop in a second process
@@ -167,9 +171,6 @@ def loop(config: Configuration, available_jobs: dict) -> None:
     start = datetime.now()
     while PROCESS.is_alive():
         time.sleep(1.0)
-        if not manager.has_collection("calculations"):
-            time.sleep(20.0)
-            continue
         # Kill the puffin if it was idle for too long
         now = datetime.now()
         if JOB.value.decode("utf-8"):
@@ -362,7 +363,11 @@ def _loop_impl(
         # Stop the loop if a stop file has been written
         stop_file = config["daemon"]["stop"]
         if os.path.isfile(stop_file):
-            os.remove(stop_file)
+            if config.daemon()["remove_stop_file"]:
+                try:
+                    os.remove(stop_file)
+                except FileNotFoundError:
+                    pass
             _log(config, "Detected stop file " + stop_file + " and stopped puffin.")
             break
 
@@ -463,16 +468,15 @@ def _loop_impl(
                            "Dev-Note: This error should not be reachable.") from e
         module = import_module("scine_puffin.jobs." + job_name)
         class_ = getattr(module, class_name)
-        job = class_()
 
-        SUCCESS = multiprocessing.Value('i', False)  # Create value in shared memory. Use int for bool flag
+        SUCCESS: Any = multiprocessing.Value('i', False)  # Create value in shared memory. Use int for bool flag
         # Run the job in a third process
         JOB_PROCESS = multiprocessing.Process(
             target=_job_execution,
             args=(),
             kwargs={
                 "config": config,
-                "job": job,
+                "job_class": class_,
                 "manager": manager,
                 "calculation": calculation,
                 "SUCCESS": SUCCESS,
@@ -557,10 +561,11 @@ def _loop_impl(
                 break
 
 
-def _job_execution(config: Configuration, job, manager, calculation, SUCCESS=None) -> None:
+def _job_execution(config: Configuration, job_class: type, manager, calculation, SUCCESS=None) -> None:
     """
     We are running job in a separate process to save us from SegFaults and enforce memory limit
     """
+    job = job_class()
     _log(config, "Processing Job: {:s}".format(str(calculation.id())))
     # Prepare job directory and start timer
     start = datetime.now()
