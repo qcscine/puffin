@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -101,7 +101,6 @@ class ScineAfir(ReactJob):
                 raise RuntimeError(self.name + " is only meant for a single structure!")
             settings_manager.separate_settings(self._calculation.get_settings())
             self.sort_settings(settings_manager.task_settings)
-            new_label = self.determine_new_label(structure)
 
             self.systems, keys = settings_manager.prepare_readuct_task(
                 structure, calculation, calculation.get_settings(), config["resources"]
@@ -123,6 +122,10 @@ class ScineAfir(ReactJob):
                 [structure.get_multiplicity()],
                 settings_manager.calculator_settings
             )
+
+            graph, self.systems = self.make_graph_from_calc(self.systems, keys[0])
+            new_label = self.determine_new_label(structure, graph)
+
             new_structure = self.optimization_postprocessing(success, self.systems, product_names, structure,
                                                              new_label, program_helper, ['energy', 'bond_orders'])
             self.store_property(

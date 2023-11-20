@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -251,7 +251,7 @@ class ScineReactComplexAfir(ReactJob):
                 else:
                     rc_opt_graph = None
                 if rc_opt_graph is not None:
-                    self.save_barrierless_reaction(rc_opt_graph, program_helper)
+                    self.save_barrierless_reaction_from_rcopt(rc_opt_graph, program_helper)
                 else:
                     calculation.set_comment(self.name + " AFIR Job: No TS guess found.")
                 self.capture_raw_output()
@@ -317,65 +317,7 @@ class ScineReactComplexAfir(ReactJob):
             )
 
             """ TS Optimization """
-            inputs = self.output("bspline")
-            self.setup_automatic_mode_selection("tsopt")
-            print("TSOpt Settings:")
-            print(self.settings["tsopt"], "\n")
-            self.systems, success = self.observed_readuct_call(
-                'run_tsopt_task', self.systems, inputs, **self.settings["tsopt"]
-            )
-            self.throw_if_not_successful(
-                success, self.systems, inputs, ["energy"], "TS optimization failed:\n"
-            )
-
-            """ TS Hessian """
-            inputs = self.output("tsopt")
-            self.systems, success = readuct.run_hessian_task(self.systems, inputs)
-            self.throw_if_not_successful(
-                success,
-                self.systems,
-                inputs,
-                ["energy", "hessian", "thermochemistry"],
-                "TS Hessian failed:\n",
-            )
-
-            """ IRC """
-            inputs = self.output("tsopt")
-            print("IRC Settings:")
-            print(self.settings["irc"], "\n")
-            self.systems, success = self.observed_readuct_call(
-                'run_irc_task', self.systems, inputs, **self.settings["irc"])
-
-            """ IRC Opt"""
-            inputs = self.output("irc")
-            print("IRC Optimization Settings:")
-            print(self.settings["ircopt"], "\n")
-            self.systems, success = self.observed_readuct_call(
-                'run_opt_task', self.systems, [inputs[0]], **self.settings["ircopt"])
-            self.systems, success = self.observed_readuct_call(
-                'run_opt_task', self.systems, [inputs[1]], **self.settings["ircopt"])
-
-            """ Check whether we have a valid IRC """
-            initial_charge = settings_manager.calculator_settings[utils.settings_names.molecular_charge]
-            product_names, start_names = self.irc_sanity_checks_and_analyze_sides(
-                initial_charge, self.check_charges, inputs, settings_manager.calculator_settings)
-            if product_names is None:  # IRC did not pass checks, reason has been set as comment, complete job
-                self.verify_connection()
-                self.capture_raw_output()
-                scine_helper.update_model(
-                    self.systems[self.output("tsopt")[0]],
-                    self._calculation,
-                    self.config,
-                )
-                raise breakable.Break
-
-            """ Store new starting material conformer(s) """
-            if start_names is not None:
-                start_structures = self.store_start_structures(
-                    start_names, program_helper, "tsopt")
-            else:
-                start_structures = self._calculation.get_structures()
-
-            self.react_postprocessing(product_names, program_helper, "tsopt", start_structures)
+            tsguess = self.output("bspline")[0]
+            self._tsopt_hess_irc_ircopt_postprocessing(tsguess, settings_manager, program_helper)
 
         return self.postprocess_calculation_context()

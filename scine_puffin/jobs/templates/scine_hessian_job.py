@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 import numpy as np
+
+import scine_database as db
+import scine_utilities as utils
+
 
 from .job import job_configuration_wrapper
 from .scine_job import ScineJob
@@ -31,7 +35,7 @@ class HessianJob(ScineJob):
     def required_programs():
         return ["database", "readuct", "utils"]
 
-    def store_hessian_data(self, system, structure):
+    def store_hessian_data(self, system: utils.core.Calculator, structure: db.Structure) -> None:
         """
         Stores results from a Hessian calculation and Thermochemistry for the specified structure based on the given
         calculator. Does not perform checks.
@@ -47,11 +51,15 @@ class HessianJob(ScineJob):
         structure :: db.Structure (Scine::Database::Structure)
             A structure for which the property is saved.
         """
-        import scine_utilities as utils
-
+        results = system.get_results()
+        if results.energy is None:
+            self.raise_named_exception(f"{system.name()} is missing energy result")
+            return  # unreachable only for linter
         if not structure.has_property("electronic_energy"):
             self.store_energy(system, structure)
-        results = system.get_results()
+        if results.hessian is None:
+            self.raise_named_exception(f"{system.name()} is missing Hessian result")
+            return  # unreachable only for linter
         # Get normal modes and frequencies
         atoms = structure.get_atoms()
         modes_container = utils.normal_modes.calculate(results.hessian, atoms.elements, atoms.positions)
@@ -94,6 +102,13 @@ class HessianJob(ScineJob):
         )
 
         thermo_container = results.thermochemistry
+        if thermo_container is None:
+            thermo_calculator = utils.ThermochemistryCalculator(results.hessian, atoms, structure.get_multiplicity(),
+                                                                results.energy)
+            thermo_calculator.set_temperature(float(model.temperature))
+            thermo_calculator.set_pressure(float(model.pressure))
+            thermo_container = thermo_calculator.calculate()
+
         self.store_property(
             self._properties,
             "gibbs_free_energy",

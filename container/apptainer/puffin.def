@@ -42,11 +42,12 @@ From: ubuntu:focal
     echo 'export MKLROOT=/opt/intel/oneapi/mkl/latest' >>$SINGULARITY_ENVIRONMENT
 
     # Install Cython
-    pip3 install Cython pythran
+    pip3 install Cython==0.29.36 pythran
 
     # Install numpy
     git clone https://github.com/numpy/numpy.git numpy
     cd numpy
+    git checkout v1.24.2
     git submodule update --init
     cp site.cfg.example site.cfg
     echo "\n[mkl]" >> site.cfg
@@ -62,6 +63,7 @@ From: ubuntu:focal
     # Install scipy
     git clone https://github.com/scipy/scipy.git scipy
     cd scipy
+    git checkout v1.10.1
     git submodule update --init
     python3 setup.py build
     python3 setup.py install

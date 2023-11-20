@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -25,12 +25,12 @@ class Graph(ConnectivityJob):
         If ``True``, the structure's connectivity is derived from interatomic
         distances via the utils.BondDetector: The bond orders used for
         interpretation are set to the maximum between those given in the
-        ``bond_orders`` property and 1.0, whereever the utils.BondDetector
+        ``bond_orders`` property and 1.0, wherever the utils.BondDetector
         detects a bond. (default: True)
       sub_based_on_distance_connectivity :: bool
         If ``True``, the structure's connectivity is derived from interatomic
         distances via the utils.BondDetector: The bond orders used for
-        interpretation are removed, whereever the utils.BondDetector does not
+        interpretation are removed, wherever the utils.BondDetector does not
         detect a bond. (default: True)
       enforce_bond_order_model :: bool
         If ``True``, only processes ``bond_orders`` that were generated with
@@ -53,7 +53,7 @@ class Graph(ConnectivityJob):
         Graph representations of the structure will be added to the structures
         ``graphs`` field. The added representations are: A representation of the
         graph ``masm_cbor_graph``, and the decision representations of the existing
-        stereopermutators using a nearest neighour fit ``masm_decision_list``
+        stereopermutators using a nearest neighbor fit ``masm_decision_list``
         Any previous graph representations of the structure will be overwritten.
     """
 

@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+import scine_database as db
+import scine_utilities as utils
+
+from copy import deepcopy
 from scine_puffin.config import Configuration
-from scine_puffin.utilities import scine_helper
 from .templates.job import breakable, calculation_context, job_configuration_wrapper
 from .templates.scine_react_job import ReactJob
+from typing import Optional, List
+from scine_puffin.utilities.scine_helper import SettingsManager
 
 
 class ScineBsplineOptimization(ReactJob):
@@ -36,7 +41,7 @@ class ScineBsplineOptimization(ReactJob):
       Optional settings are read from the ``settings`` field, which is part of
       any ``Calculation`` stored in a SCINE Database.
       All possible settings for this job are based on those available in SCINE
-      Readuct. For a complete list see the
+      ReaDuct. For a complete list see the
       `ReaDuct manual <https://scine.ethz.ch/static/download/readuct_manual.pdf>`_
 
       Given that this job does more than one, in fact many separate calculations
@@ -76,7 +81,7 @@ class ScineBsplineOptimization(ReactJob):
           of 2 (default) will check triplet and quintet for a singlet
           and will check singlet, quintet und septet for triplet.
 
-      Additionally all settings that are recognized by the SCF program chosen.
+      Additionally, all settings that are recognized by the SCF program chosen.
       are also available. These settings are not required to be prepended with
       any flag.
 
@@ -115,7 +120,7 @@ class ScineBsplineOptimization(ReactJob):
 
     def __init__(self):
         super().__init__()
-        self.name = "Scine double eneded transition state optimization from b-splines"
+        self.name = "Scine double ended transition state optimization from b-splines"
         self.exploration_key = "bspline"
         tsopt_defaults = {
             "output": ["ts"],
@@ -151,13 +156,21 @@ class ScineBsplineOptimization(ReactJob):
     def run(self, manager, calculation, config: Configuration) -> bool:
 
         import scine_readuct as readuct
-        import scine_utilities as utils
-        import scine_database as db
         import scine_molassembler as masm
         # Everything that calls SCINE is enclosed in a try/except block
         with breakable(calculation_context(self)):
+            if len(calculation.get_structures()) != 2:
+                self.raise_named_exception(f"{self.name} requires 2 input structures.")
             r_structure = db.Structure(calculation.get_structures()[0], self._structures)
             p_structure = db.Structure(calculation.get_structures()[1], self._structures)
+            if len(r_structure.get_atoms()) != len(p_structure.get_atoms()):
+                self.raise_named_exception(f"{self.name} requires that the input structures are the same molecule.")
+            if r_structure.get_model() != p_structure.get_model():
+                self.raise_named_exception(f"{self.name} requires that the input structures have the same model.")
+            if r_structure.get_multiplicity() != p_structure.get_multiplicity() or \
+                    r_structure.get_charge() != p_structure.get_charge():
+                self.raise_named_exception(f"{self.name} requires that the input structures have the same "
+                                           f"molecular charge and spin multiplicity.")
             settings_manager, program_helper = self.create_helpers(r_structure)
             settings_manager.separate_settings(self._calculation.get_settings())
             settings_manager.update_calculator_settings(r_structure, self._calculation.get_model(),
@@ -168,12 +181,12 @@ class ScineBsplineOptimization(ReactJob):
             # Prepare the structures by
             # 1. optimizing both spline ends.
             # 2. set attributes of parent class start_graph, start_charges etc.
-            reactant_name, product_name, opt_r_graph, opt_p_graph = self.prepare_structures(settings_manager,
-                                                                                            r_structure, p_structure)
+            reactant_name, product_name, opt_r_graph, opt_p_graph = self.__prepare_structures(settings_manager,
+                                                                                              r_structure, p_structure)
             # Stop the calculation if both spline ends collapsed to the same species.
             if masm.JsonSerialization.equal_molecules(opt_r_graph, opt_p_graph):
-                self.check_barrierless_reactions(settings_manager, reactant_name, product_name, r_structure,
-                                                 p_structure)
+                self.__check_barrierless_reactions(settings_manager, reactant_name, product_name, r_structure,
+                                                   p_structure)
                 calculation.set_comment(self.name + " Spline ends transform barrier-less!")
                 self.capture_raw_output()
                 raise breakable.Break
@@ -195,81 +208,27 @@ class ScineBsplineOptimization(ReactJob):
                 "B-Spline optimization failed:\n",
             )
 
-            """ TSOPT JOB """
-            print("TSOpt Settings:")
-            print(self.settings["tsopt"], "\n")
+            """ TSOPT-Hess-IRC """
             inputs = self.output("bspline")
-            self.systems, success = self.observed_readuct_call(
-                'run_tsopt_task', self.systems, inputs, **self.settings["tsopt"])
-            self.throw_if_not_successful(
-                success,
-                self.systems,
-                self.output("tsopt"),
-                ["energy"],
-                "TS optimization failed:\n",
-            )
-            """ TS HESSIAN """
-            inputs = self.output("tsopt")
-            self.systems, success = readuct.run_hessian_task(self.systems, inputs)
-            self.throw_if_not_successful(
-                success,
-                self.systems,
-                inputs,
-                ["energy", "hessian", "thermochemistry"],
-                "TS Hessian calculation failed.\n",
-            )
-            if self.n_imag_frequencies(inputs[0]) != 1:
-                self.raise_named_exception(
-                    "Error: "
-                    + self.name
-                    + " failed with message: "
-                    + "TS has incorrect number of imaginary frequencies."
-                )
-            """ IRC JOB """
-            # IRC (only a few steps to allow decent graph extraction)
-            print("IRC Settings:")
-            print(self.settings["irc"], "\n")
-            self.systems, success = self.observed_readuct_call(
-                'run_irc_task', self.systems, inputs, **self.settings["irc"])
-            """ IRC OPT JOB """
-            # Run a small energy minimization after initial IRC
-            inputs = self.output("irc")
-            print("IRC Optimization Settings:")
-            print(self.settings["ircopt"], "\n")
-            self.systems, success = self.observed_readuct_call(
-                'run_opt_task', self.systems, [inputs[0]], **self.settings["ircopt"])
-            self.systems, success = self.observed_readuct_call(
-                'run_opt_task', self.systems, [inputs[1]], **self.settings["ircopt"])
-
-            """ Check whether we have a valid IRC """
-            initial_charge = settings_manager.calculator_settings[utils.settings_names.molecular_charge]
-            product_names, start_names = self.irc_sanity_checks_and_analyze_sides(
-                initial_charge, self.check_charges, inputs, settings_manager.calculator_settings)
-            if product_names is None:  # IRC did not pass checks, reason has been set as comment, complete job
-                self.verify_connection()
-                self.capture_raw_output()
-                scine_helper.update_model(
-                    self.systems[self.output("tsopt")[0]],
-                    self._calculation,
-                    self.config,
-                )
-                raise breakable.Break
+            product_names, start_names = self._tsopt_hess_irc_ircopt(inputs[0], settings_manager)
 
             """ Store new starting material conformer(s) """
             r_tuple = None
-            p_tuple = self.check_barrierless_alternative_reactions(settings_manager, product_name, p_structure,
-                                                                   product_names, "product_00")
+            # This may be re-enabled in the future. Therefore, I would like to keep it as a comment.
+            # p_tuple = self.__check_barrierless_alternative_reactions(settings_manager, product_name, p_structure,
+            #                                                          product_names, "product_00")
             if start_names is not None:
-                r_tuple = self.check_barrierless_alternative_reactions(settings_manager, reactant_name, r_structure,
-                                                                       start_names, "reactant_00")
+                if not self.no_irc_structure_matches_start:
+                    r_tuple = self.__check_barrierless_alternative_reactions(settings_manager, reactant_name,
+                                                                             r_structure, start_names, "reactant_00")
                 start_structures = self.store_start_structures(
-                    start_names, program_helper, "tsopt", [])
+                    start_names, program_helper, "tsopt", [r_structure.id()])
             else:
                 if r_structure.get_model() == self._calculation.get_model():
                     start_structures = [self._calculation.get_structures()[0]]
                 else:
                     start_structures = self.store_start_structures(
-                        [reactant_name], program_helper, "tsopt", [])
+                        [reactant_name], program_helper, "tsopt", [r_structure.id()])
 
             # If the lhs or rhs of the reaction decomposes into fragment through a barrier-less reaction and these
             # fragments are different from the fragments of the original lhs or rhs, e.g,
@@ -278,18 +237,20 @@ class ScineBsplineOptimization(ReactJob):
             # we have to add a barrier-less reaction transforming between the fragments. A simple example for such
             # a situation is a barrier-less protonation that is only barrier-less with the "new" electronic structure
             # model.
-            lhs, rhs = self.react_postprocessing(product_names, program_helper, "tsopt", start_structures)
+            # Note that this logic only applies if the individual endpoints used as input for the spline, are
+            # rediscovered by the IRC. Since this is only checked for the lhs, the corresponding fragmentation
+            # embedding for the rhs is disabled at the moment.
+            lhs, _, _ = self.react_postprocessing(product_names, program_helper, "tsopt", start_structures)
             if r_tuple is not None:
-                self.add_barrierless_reaction(r_tuple[0], r_tuple[1], r_tuple[2], lhs, r_tuple[3])
-            if p_tuple is not None:
-                self.add_barrierless_reaction(p_tuple[0], p_tuple[1], p_tuple[2], rhs, p_tuple[3])
-
+                self.__add_barrierless_reaction(r_tuple[0], r_tuple[1], r_tuple[2], lhs, r_tuple[3])
+            # if p_tuple is not None:
+            #     self.__add_barrierless_reaction(p_tuple[0], p_tuple[1], p_tuple[2], rhs, p_tuple[3])
         return self.postprocess_calculation_context()
 
-    def set_up_calculator(self, structure, settings_manager, name):
-        import scine_utilities as utils
-        from copy import deepcopy
-
+    def __set_up_calculator(self, structure: db.Structure, settings_manager: SettingsManager, name: str):
+        """
+        Create a calculator for the given structure.
+        """
         xyz_name = name + ".xyz"
         utils.io.write(xyz_name, structure.get_atoms())
         structure_calculator_settings = deepcopy(settings_manager.calculator_settings)
@@ -306,31 +267,39 @@ class ScineBsplineOptimization(ReactJob):
         fragment_atoms, graph_string, charges, multiplicities, decision_lists = self.get_graph_charges_multiplicities(
             name, structure.get_charge())
 
-        if structure.has_graph("masm_cbor_graph") or structure.has_graph("masm_decision_list"):
+        if structure.has_graph("masm_cbor_graph") and structure.has_graph("masm_decision_list"):
             structure.set_graph("masm_cbor_graph", graph_string)
             structure.set_graph("masm_decision_list", ";".join(decision_lists))
 
         return fragment_atoms, graph_string, charges, multiplicities, decision_lists
 
-    def check_barrierless_alternative_reactions(self, settings_manager, opt_name_reactant,
-                                                r_structure, opt_reactant_fragment_names,
-                                                r_name):
-        r_fragments, _, r_charges, r_multi, _ = self.set_up_calculator(r_structure, settings_manager, r_name)
+    def __check_barrierless_alternative_reactions(self, settings_manager: SettingsManager, opt_name_reactant: str,
+                                                  r_structure: db.Structure, opt_reactant_fragment_names: List[str],
+                                                  r_name: str):
+        """
+        Check if there are multiple plausible decomposition paths for the given complex or structure, i.e, the structure
+        reacted barrier-less leading to a different fragmentation path as for the original elementary step.
+        """
+        r_fragments, _, r_charges, r_multi, _ = self.__set_up_calculator(r_structure, settings_manager, r_name)
 
         if len(r_fragments) == 1:
             return None
 
-        opt_r_orig_names, opt_r_orig_fragment_graphs, _ = self.optimize_and_get_graphs_and_energies(
-            "opt_r_orig_fragments", r_fragments, r_charges, r_multi, settings_manager
+        opt_r_orig_names, opt_r_orig_fragment_graphs, _ = self.__optimize_and_get_graphs_and_energies(
+            "opt_" + r_name + "_orig_fragments", r_fragments, r_charges, r_multi, settings_manager
         )
 
-        if not self.same_molecules(opt_r_orig_names, opt_reactant_fragment_names):
-            opt_r_graph = self.make_graph_from_calc(self.systems, opt_name_reactant)
+        if not self.__same_molecules(opt_r_orig_names, opt_reactant_fragment_names):
+            opt_r_graph, self.systems = self.make_graph_from_calc(self.systems, opt_name_reactant)
             return opt_name_reactant, opt_r_orig_fragment_graphs, opt_r_graph, opt_r_orig_names
         return None
 
-    def check_barrierless_reactions(self, settings_manager, opt_name_reactant, opt_name_product, r_structure,
-                                    p_structure):
+    def __check_barrierless_reactions(self, settings_manager: SettingsManager, opt_name_reactant: str,
+                                      opt_name_product: str, r_structure: db.Structure, p_structure: db.Structure):
+        """
+        Check if both input structures collapsed to the same molecule. We will compare the optimized structures of
+        the input's lhs and rhs.
+        """
         import scine_molassembler as masm
         results = self._calculation.get_results()
         results.clear()
@@ -339,9 +308,9 @@ class ScineBsplineOptimization(ReactJob):
         r_name = "reactant_00"
         p_name = "product_00"
 
-        r_fragments, r_graph, r_charges, r_multi, _ = self.set_up_calculator(
+        r_fragments, r_graph, r_charges, r_multi, _ = self.__set_up_calculator(
             r_structure, settings_manager, r_name)
-        p_fragments, p_graph, p_charges, p_multi, _ = self.set_up_calculator(
+        p_fragments, p_graph, p_charges, p_multi, _ = self.__set_up_calculator(
             p_structure, settings_manager, p_name)
         # check graph of spline ends
         opt_r_fragments, opt_r_graph, opt_r_charges, opt_r_multiplicities, _ =\
@@ -350,41 +319,42 @@ class ScineBsplineOptimization(ReactJob):
             self.get_graph_charges_multiplicities(opt_name_product, charge)
         # create structures for optimized ends
         if ";" in opt_r_graph:
-            opt_r_fragment_names, opt_r_frgagment_graphs, _ = self.optimize_and_get_graphs_and_energies(
+            opt_r_fragment_names, opt_r_fragment_graphs, _ = self.__optimize_and_get_graphs_and_energies(
                 "opt_r_fragments", opt_r_fragments, opt_r_charges, opt_r_multiplicities, settings_manager)
-            opt_reactant_structure_ids = self.add_barrierless_reaction(opt_name_reactant, opt_r_frgagment_graphs,
-                                                                       opt_r_graph, None, opt_r_fragment_names)
-
+            opt_reactant_structure_ids = self.__add_barrierless_reaction(opt_name_reactant, opt_r_fragment_graphs,
+                                                                         opt_r_graph, None, opt_r_fragment_names)
             # optimization changed the initial complex. Add barrier-less step between previous fragments and the
             # optimized fragment
             if ";" in r_graph and not masm.JsonSerialization.equal_molecules(r_graph, opt_r_graph):
-                opt_r_orig_framnet_names, opt_r_orig_fragment_graphs, _ = self.optimize_and_get_graphs_and_energies(
+                opt_r_orig_framnet_names, opt_r_orig_fragment_graphs, _ = self.__optimize_and_get_graphs_and_energies(
                     "opt_r_orig_fragments", r_fragments, r_charges, r_multi, settings_manager
                 )
-                if not self.same_molecules(opt_r_orig_framnet_names, opt_r_fragment_names):
-                    self.add_barrierless_reaction(opt_name_reactant, opt_r_orig_fragment_graphs, opt_r_graph,
-                                                  opt_reactant_structure_ids, opt_r_orig_framnet_names)
+                if not self.__same_molecules(opt_r_orig_framnet_names, opt_r_fragment_names):
+                    self.__add_barrierless_reaction(opt_name_reactant, opt_r_orig_fragment_graphs, opt_r_graph,
+                                                    opt_reactant_structure_ids, opt_r_orig_framnet_names)
 
         if ";" in opt_p_graph and not masm.JsonSerialization.equal_molecules(opt_p_graph, opt_r_graph):
-            opt_p_fragment_names, opt_p_frgagment_graphs, _ = self.optimize_and_get_graphs_and_energies(
+            opt_p_fragment_names, opt_p_frgagment_graphs, _ = self.__optimize_and_get_graphs_and_energies(
                 "opt_p_fragments",
                 opt_p_fragments,
                 opt_p_charges,
                 opt_p_multiplicities,
                 settings_manager)
-            opt_structure_ids = self.add_barrierless_reaction(opt_name_product, opt_p_frgagment_graphs, opt_p_graph,
-                                                              None, opt_p_fragment_names)
+            opt_structure_ids = self.__add_barrierless_reaction(opt_name_product, opt_p_frgagment_graphs, opt_p_graph,
+                                                                None, opt_p_fragment_names)
 
             if ";" in p_graph and not masm.JsonSerialization.equal_molecules(p_graph, opt_p_graph):
-                opt_p_orig_framnet_names, opt_p_orig_fragment_graphs, _ = self.optimize_and_get_graphs_and_energies(
+                opt_p_orig_framnet_names, opt_p_orig_fragment_graphs, _ = self.__optimize_and_get_graphs_and_energies(
                     "opt_p_orig_fragments", p_fragments, p_charges, p_multi, settings_manager
                 )
-                if not self.same_molecules(opt_p_orig_framnet_names, opt_p_fragment_names):
-                    self.add_barrierless_reaction(opt_name_product, opt_p_orig_fragment_graphs, opt_p_graph,
-                                                  opt_structure_ids, opt_p_orig_framnet_names)
+                if not self.__same_molecules(opt_p_orig_framnet_names, opt_p_fragment_names):
+                    self.__add_barrierless_reaction(opt_name_product, opt_p_orig_fragment_graphs, opt_p_graph,
+                                                    opt_structure_ids, opt_p_orig_framnet_names)
 
-    def prepare_structures(self, settings_manager, reactant_structure, products_structure):
-        from copy import deepcopy
+    def __prepare_structures(self, settings_manager, reactant_structure, products_structure):
+        """
+        Optimize the input structures + generate graphs.
+        """
         # optimize spline ends
         opt_name_reactant = self.optimize_structures("opt_reactant", [reactant_structure.get_atoms()],
                                                      [reactant_structure.get_charge()],
@@ -407,21 +377,16 @@ class ScineBsplineOptimization(ReactJob):
 
         return opt_name_reactant[0], opt_name_product[0], opt_r_graph, opt_p_graph
 
-    def create_complex_or_minimum(self, graph, calculator_name):
-        import scine_database as db
+    def __create_complex_or_minimum(self, graph: str, calculator_name: str):
+        """
+        Create a structure with the correct label according to its Molassembler serialization (graph).
+        """
         label = db.Label.MINIMUM_OPTIMIZED if ";" not in graph else db.Label.COMPLEX_OPTIMIZED
         new_structure = self.create_new_structure(self.systems[calculator_name], label)
         self.transfer_properties(self.ref_structure, new_structure)
+        bond_orders, self.systems = self.make_bond_orders_from_calc(self.systems, calculator_name)
         self.store_energy(self.systems[calculator_name], new_structure)
-        self.store_property(
-            self._properties,
-            "bond_orders",
-            "SparseMatrixProperty",
-            self.systems[calculator_name].get_results().bond_orders.matrix,
-            self._calculation.get_model(),
-            self._calculation,
-            new_structure,
-        )
+        self.store_bond_orders(bond_orders, new_structure)
         self.store_property(
             self._properties,
             "atomic_charges",
@@ -431,16 +396,19 @@ class ScineBsplineOptimization(ReactJob):
             self._calculation,
             new_structure,
         )
-        self.add_graph(new_structure, self.systems[calculator_name].get_results().bond_orders)
+        self.add_graph(new_structure, bond_orders)
 
         results = self._calculation.get_results()
         results.add_structure(new_structure.id())
         self._calculation.set_results(self._calculation.get_results() + results)
         return new_structure
 
-    def optimize_and_get_graphs_and_energies(self, fragment_base_name, fragments, charges, multiplicities,
-                                             settings_manager):
-        from copy import deepcopy
+    def __optimize_and_get_graphs_and_energies(self, fragment_base_name: str, fragments: List[utils.AtomCollection],
+                                               charges: List[int], multiplicities: List[int],
+                                               settings_manager: SettingsManager):
+        """
+        Optimize molecular fragments and return their names, graphs, and energies.
+        """
         opt_fragment_names = self.optimize_structures(fragment_base_name, fragments,
                                                       charges, multiplicities,
                                                       deepcopy(settings_manager.calculator_settings.as_dict()))
@@ -458,17 +426,20 @@ class ScineBsplineOptimization(ReactJob):
 
         return opt_fragment_names, opt_f_graphs, fragment_energies
 
-    def add_barrierless_reaction(self, opt_name, opt_f_graphs, opt_graph, opt_structure_ids,
-                                 opt_fragment_names):
-        import scine_database as db
+    def __add_barrierless_reaction(self, opt_name: str, opt_f_graphs: List[str], opt_graph: str,
+                                   opt_structure_ids: Optional[List[db.ID]], opt_fragment_names: List[str]):
+        """
+        Add a barrier-less reaction to the database between the optimized structure and its fragments.
+        """
+        self.__assert_conserved_atom(opt_fragment_names, [opt_name])
         db_results = self._calculation.get_results()
         db_results.clear()
         fragment_structures = []
         for name, graph in zip(opt_fragment_names, opt_f_graphs):
-            fragment_structures.append(self.create_complex_or_minimum(graph, name))
+            fragment_structures.append(self.__create_complex_or_minimum(graph, name))
 
         if opt_structure_ids is None:
-            opt_structure_ids = [self.create_complex_or_minimum(opt_graph, opt_name).id()]
+            opt_structure_ids = [self.__create_complex_or_minimum(opt_graph, opt_name).id()]
         new_step = db.ElementaryStep()
         new_step.link(self._elementary_steps)
         new_step.create([s.id() for s in fragment_structures], opt_structure_ids)
@@ -478,10 +449,37 @@ class ScineBsplineOptimization(ReactJob):
         self._calculation.set_results(self._calculation.get_results() + db_results)
         return opt_structure_ids
 
-    def same_molecules(self, names_one, names_two):
+    def __assert_conserved_atom(self, lhs_names: List[str], rhs_names: List[str]):
+        """
+        Assert that the number of atoms did not change between the calculators.
+        """
+        lhs_atoms = [self.systems[name].structure for name in lhs_names]
+        rhs_atoms = [self.systems[name].structure for name in rhs_names]
+        lhs_counts = self.__get_elements_in_atom_collections(lhs_atoms)
+        rhs_counts = self.__get_elements_in_atom_collections(rhs_atoms)
+        print("Atom counts lhs", lhs_counts)
+        print("Atom counts rhs", rhs_counts)
+        if lhs_counts != rhs_counts:
+            raise RuntimeError("Error: Non stoichiometric elementary step detected. The structures are likely wrong.")
+
+    @staticmethod
+    def __get_elements_in_atom_collections(atom_collections):
+        """
+        Builds a dictionary containing the element symbols and the number of their occurrence in a given atom
+        collection.
+        """
+        elements: List[str] = []
+        for atom_collection in atom_collections:
+            elements += [str(e) for e in atom_collection.elements]
+        return {e: elements.count(e) for e in elements}
+
+    def __same_molecules(self, names_one, names_two):
+        """
+        Check if two molecules/calculators are the same according to charges, Molassembler (graphs), and multiplicities.
+        """
         import scine_molassembler as masm
-        graphs_one, charges_one, multies_one = self.get_sorted_graphs_charges_multiplicities(names_one)
-        graphs_two, charges_two, multies_two = self.get_sorted_graphs_charges_multiplicities(names_two)
+        graphs_one, charges_one, multies_one = self.__get_sorted_graphs_charges_multiplicities(names_one)
+        graphs_two, charges_two, multies_two = self.__get_sorted_graphs_charges_multiplicities(names_two)
 
         total_graph_one = ";".join(graphs_one)
         total_graph_two = ";".join(graphs_two)
@@ -489,15 +487,18 @@ class ScineBsplineOptimization(ReactJob):
         return charges_one == charges_two and multies_one == multies_two and masm.JsonSerialization.equal_molecules(
             total_graph_one, total_graph_two)
 
-    def get_sorted_graphs_charges_multiplicities(self, names_one):
-        import scine_utilities as utils
+    def __get_sorted_graphs_charges_multiplicities(self, names_one: List[str]):
+        """
+        Get the sorted Molassembler serializations (graphs), charges, and multiplicites of the calculators corresponding
+        to the given names
+        """
         charges_one = []
         multies_one = []
         graphs_one = []
         for name in names_one:
             charges_one.append(self.systems[name].settings[utils.settings_names.molecular_charge])
             multies_one.append(self.systems[name].settings[utils.settings_names.spin_multiplicity])
-            graphs_one.append(self.make_graph_from_calc(self.systems, name))
+            graphs_one.append(self.make_graph_from_calc(self.systems, name)[0])
         graphs, charges, multiplicities = (
             list(start_val)
             for start_val in zip(*sorted(zip(

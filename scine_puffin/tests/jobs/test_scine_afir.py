@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -77,14 +77,14 @@ class ScineAfirOptimizationJobTest(JobTestCase):
     @skip_without('database', 'readuct', 'molassembler')
     def test_user_guess(self):
         import scine_database as db
-        self.run_by_label(db.Label.USER_GUESS, db.Label.USER_OPTIMIZED)
+        self.run_by_label(db.Label.USER_GUESS, db.Label.USER_COMPLEX_OPTIMIZED)
 
     @skip_without('database', 'readuct', 'molassembler')
     def test_minimum_guess(self):
         import scine_database as db
-        self.run_by_label(db.Label.MINIMUM_GUESS, db.Label.MINIMUM_OPTIMIZED)
+        self.run_by_label(db.Label.MINIMUM_GUESS, db.Label.COMPLEX_OPTIMIZED)
 
     @skip_without('database', 'molassembler', 'readuct')
     def test_surface_guess(self):
         import scine_database as db
-        self.run_by_label(db.Label.SURFACE_GUESS, db.Label.SURFACE_OPTIMIZED)
+        self.run_by_label(db.Label.SURFACE_GUESS, db.Label.SURFACE_COMPLEX_OPTIMIZED)

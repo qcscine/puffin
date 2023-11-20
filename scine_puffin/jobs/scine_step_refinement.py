@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 from scine_puffin.config import Configuration
-from scine_puffin.utilities import scine_helper
 from .templates.job import breakable, calculation_context, job_configuration_wrapper
 from .templates.scine_react_job import ReactJob
 from scine_puffin.utilities import masm_helper
@@ -93,7 +92,7 @@ class ScineStepRefinement(ReactJob):
           of 2 (default) will check triplet and quintet for a singlet
           and will check singlet, quintet und septet for triplet.
 
-      Additionally all settings that are recognized by the SCF program chosen.
+      Additionally, all settings that are recognized by the SCF program chosen.
       are also available. These settings are not required to be prepended with
       any flag.
 
@@ -166,8 +165,6 @@ class ScineStepRefinement(ReactJob):
     @job_configuration_wrapper
     def run(self, manager, calculation, config: Configuration) -> bool:
 
-        import scine_readuct as readuct
-        import scine_utilities as utils
         import scine_database as db
         # Everything that calls SCINE is enclosed in a try/except block
         with breakable(calculation_context(self)):
@@ -178,69 +175,13 @@ class ScineStepRefinement(ReactJob):
             start_structures = [db.Structure(ident, self._structures) for ident in all_struc_ids]
             settings_manager.separate_settings(self._calculation.get_settings())
             self.sort_settings(settings_manager.task_settings)
-            """ TSOPT JOB """
+            """ TSOPT Hessian IRC IRCOPT """
             ts_guess, keys = settings_manager.prepare_readuct_task(ts_struc,
                                                                    self._calculation,
                                                                    self._calculation.get_settings(),
                                                                    config["resources"])
             self.systems[keys[0]] = ts_guess[keys[0]]
-            print("TSOpt Settings:")
-            print(self.settings["tsopt"], "\n")
-            self.systems, success = self.observed_readuct_call(
-                'run_tsopt_task', self.systems, keys, **self.settings["tsopt"])
-            self.throw_if_not_successful(
-                success,
-                self.systems,
-                self.output("tsopt"),
-                ["energy"],
-                "TS optimization failed:\n",
-            )
-            """ TS HESSIAN """
-            inputs = self.output("tsopt")
-            self.systems, success = readuct.run_hessian_task(self.systems, inputs)
-            self.throw_if_not_successful(
-                success,
-                self.systems,
-                inputs,
-                ["energy", "hessian", "thermochemistry"],
-                "TS Hessian calculation failed.\n",
-            )
-            if self.n_imag_frequencies(inputs[0]) != 1:
-                self.raise_named_exception(
-                    "Error: "
-                    + self.name
-                    + " failed with message: "
-                    + "TS has incorrect number of imaginary frequencies."
-                )
-            """ IRC JOB """
-            # IRC (only a few steps to allow decent graph extraction)
-            print("IRC Settings:")
-            print(self.settings["irc"], "\n")
-            self.systems, success = self.observed_readuct_call(
-                'run_irc_task', self.systems, inputs, **self.settings["irc"])
-            """ IRC OPT JOB """
-            # Run a small energy minimization after initial IRC
-            inputs = self.output("irc")
-            print("IRC Optimization Settings:")
-            print(self.settings["ircopt"], "\n")
-            self.systems, success = self.observed_readuct_call(
-                'run_opt_task', self.systems, [inputs[0]], **self.settings["ircopt"])
-            self.systems, success = self.observed_readuct_call(
-                'run_opt_task', self.systems, [inputs[1]], **self.settings["ircopt"])
-
-            """ Check whether we have a valid IRC """
-            initial_charge = settings_manager.calculator_settings[utils.settings_names.molecular_charge]
-            product_names, start_names = self.irc_sanity_checks_and_analyze_sides(
-                initial_charge, self.check_charges, inputs, settings_manager.calculator_settings)
-            if product_names is None:  # IRC did not pass checks, reason has been set as comment, complete job
-                self.verify_connection()
-                self.capture_raw_output()
-                scine_helper.update_model(
-                    self.systems[self.output("tsopt")[0]],
-                    self._calculation,
-                    self.config,
-                )
-                raise breakable.Break
+            product_names, start_names = self._tsopt_hess_irc_ircopt(keys[0], settings_manager)
 
             """ Store new starting material conformer(s) """
             if start_names is not None:
@@ -257,7 +198,7 @@ class ScineStepRefinement(ReactJob):
 
         return self.postprocess_calculation_context()
 
-    def optimize_reactants(self, reactant_structures, settings_manager, config):
+    def optimize_reactants(self, reactant_structures, settings_manager, config: Configuration):
         """
         Optimize the reactant structures and saves them in the database.
 
@@ -265,6 +206,7 @@ class ScineStepRefinement(ReactJob):
         -----
         * writes reactant calculators to self.systems
         * May throw exception.
+        * Requires run configuration
 
         Parameters
         ----------
@@ -282,10 +224,6 @@ class ScineStepRefinement(ReactJob):
         optimized_structures :: List[scine_database.Structure]
             The optimized reactant structures.
         """
-        import scine_readuct as readuct
-        import scine_utilities as utils
-        import scine_database as db
-
         print("Reactant Opt Settings:")
         print(self.settings["opt"], "\n")
 
@@ -313,32 +251,15 @@ class ScineStepRefinement(ReactJob):
                     "Reactant optimization failed:\n",
                 )
 
-            # Calculate the bond orders
-            self.systems, success = readuct.run_single_point_task(
-                self.systems,
-                [name],
-                spin_propensity_check=self.settings[self.job_key]["spin_propensity_check"],
-                require_bond_orders=True,
-            )
-            self.throw_if_not_successful(
-                success,
-                self.systems,
-                [name],
-                ["energy", "bond_orders"],
-                "Reactant optimization failed:\n",
-            )
-
-            pbc_string = self.systems[name].settings.get(utils.settings_names.periodic_boundaries, "")
-            masm_results = masm_helper.get_molecules_result(
+            bond_orders, self.systems = self.make_bond_orders_from_calc(self.systems, name)
+            cbor = masm_helper.get_cbor_graph(
                 self.systems[name].structure,
-                self.make_bond_orders_from_calc(self.systems, name),
+                bond_orders,
                 self.connectivity_settings,
-                pbc_string,
+                self._calculation.get_model().periodic_boundaries,
+                self.surface_indices(structure)
             )
-            structure_label = db.Label.MINIMUM_OPTIMIZED
-            if len(masm_results.molecules) > 1:
-                structure_label = db.Label.COMPLEX_OPTIMIZED
-
+            structure_label = self._determine_new_label_based_on_graph(self.systems[name], cbor)
             new_structure = self.create_new_structure(self.systems[name], structure_label)
             self.transfer_properties(structure, new_structure)
             self.store_energy(self.systems[name], new_structure)
@@ -346,11 +267,11 @@ class ScineStepRefinement(ReactJob):
                 self._properties,
                 "bond_orders",
                 "SparseMatrixProperty",
-                self.systems[name].get_results().bond_orders.matrix,
+                bond_orders.matrix,
                 self._calculation.get_model(),
                 self._calculation,
                 new_structure,
             )
-            self.add_graph(new_structure, self.systems[name].get_results().bond_orders)
+            self.add_graph(new_structure, bond_orders)
             optimized_structures.append(new_structure)
         return reactant_names, optimized_structures

@@ -1,7 +1,13 @@
 gitpython
 numpy
 psutil
+pymatgen
 python-daemon
 pyyaml
 scipy
 setproctitle
+sphinx
+sphinx_rtd_theme
+sphinx_autodoc_typehints
+sphinx_copybutton
+salib

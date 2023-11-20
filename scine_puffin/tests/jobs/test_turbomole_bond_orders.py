@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -32,6 +32,7 @@ class TurbomoleBondOrdersJobTest(JobTestCase):
         water = os.path.join(resource_path(), "water.xyz")
         structure = add_structure(self.manager, water, db.Label.USER_GUESS)
         model = db.Model('dft', 'pbe', 'def2-SVP')
+        model.program = "turbomole"
         job = db.Job('turbomole_bond_orders')
         calculation = add_calculation(self.manager, model, job, [structure.id()])
 

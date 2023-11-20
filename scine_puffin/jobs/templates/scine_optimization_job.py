@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 from typing import List, Union
+
+import scine_database as db
+import scine_utilities as utils
+
 
 from .job import job_configuration_wrapper
 from .scine_job import ScineJob
@@ -32,9 +36,9 @@ class OptimizationJob(ScineJob):
     def required_programs():
         return ["database", "readuct", "utils"]
 
-    def determine_new_label(self, structure, ignore_user_label: bool = False):
+    def determine_new_label(self, structure: db.Structure, graph: str, ignore_user_label: bool = False) -> db.Label:
         """
-        Derive the label of the optimized structure based on the given structure.
+        Derive the label of the optimized structure based on the given structure and its Molassembler graph.
 
         Notes
         -----
@@ -45,6 +49,8 @@ class OptimizationJob(ScineJob):
         ----------
         structure :: db.Structure
             The structure to be optimized
+        graph :: str
+            The graph of the structure
         ignore_user_label :: bool
             Whether the user label of the given structure shall be ignored.
             If True, an input structure 'user_guess' will get an optimized structure with 'minimum_optimized'
@@ -54,31 +60,51 @@ class OptimizationJob(ScineJob):
         new_label :: db.Label
             The label of the optimized structure
         """
-        import scine_database as db
-
         label = structure.get_label()
+        graph_is_split = ";" in graph
         if label == db.Label.MINIMUM_GUESS or label == db.Label.MINIMUM_OPTIMIZED:
-            new_label = db.Label.MINIMUM_OPTIMIZED
-        elif label == db.Label.USER_GUESS or label == db.Label.USER_OPTIMIZED:
-            new_label = db.Label.USER_OPTIMIZED
+            if graph_is_split:
+                new_label = db.Label.COMPLEX_OPTIMIZED
+            else:
+                new_label = db.Label.MINIMUM_OPTIMIZED
         elif label == db.Label.SURFACE_GUESS or label == db.Label.SURFACE_OPTIMIZED:
-            new_label = db.Label.SURFACE_OPTIMIZED
+            if graph_is_split:
+                new_label = db.Label.SURFACE_COMPLEX_OPTIMIZED
+            else:
+                new_label = db.Label.SURFACE_OPTIMIZED
         elif label == db.Label.COMPLEX_GUESS or label == db.Label.COMPLEX_OPTIMIZED:
-            new_label = db.Label.COMPLEX_OPTIMIZED
+            if graph_is_split:
+                new_label = db.Label.COMPLEX_OPTIMIZED
+            else:
+                new_label = db.Label.MINIMUM_OPTIMIZED
+        elif label == db.Label.USER_OPTIMIZED:
+            if graph_is_split:
+                new_label = db.Label.USER_COMPLEX_OPTIMIZED
+            else:
+                new_label = db.Label.USER_OPTIMIZED
+        elif label == db.Label.USER_GUESS:
+            if graph_is_split:
+                if structure.has_property("surface_atom_indices"):
+                    new_label = db.Label.USER_SURFACE_COMPLEX_OPTIMIZED
+                else:
+                    new_label = db.Label.USER_COMPLEX_OPTIMIZED
+            else:
+                if structure.has_property("surface_atom_indices"):
+                    new_label = db.Label.USER_SURFACE_OPTIMIZED
+                else:
+                    new_label = db.Label.USER_OPTIMIZED
         else:
-            error = (
-                "Unknown label '"
-                + str(label)
-                + "' of input structure: '"
-                + str(structure.id())
-                + "'\n"
-            )
+            error = f"Unknown label '{str(label)}' of input structure: '{str(structure.id())}'\n"
             self.raise_named_exception(error)
+            return  # for type checking
         if ignore_user_label and new_label == db.Label.USER_OPTIMIZED:
-            new_label = db.Label.MINIMUM_OPTIMIZED
+            if graph_is_split:
+                new_label = db.Label.COMPLEX_OPTIMIZED
+            else:
+                new_label = db.Label.MINIMUM_OPTIMIZED
         return new_label
 
-    def create_new_structure(self, calculator, label):
+    def create_new_structure(self, calculator: utils.core.Calculator, label: db.Label) -> db.Structure:
         """
         Add a new structure to the database based on the given calculator and label.
 
@@ -93,16 +119,13 @@ class OptimizationJob(ScineJob):
         label :: db.Label
             The label of the new structure
         """
-        import scine_database as db
-        import scine_utilities as utils
-
         # New structure
         new_structure = db.Structure()
         new_structure.link(self._structures)
         new_structure.create(
             calculator.structure,
             calculator.settings[utils.settings_names.molecular_charge],
-            calculator.settings[utils.settings_names.spin_multiplicity],
+            calculator.settings.get(utils.settings_names.spin_multiplicity, 0),
             self._calculation.get_model(),
             label,
         )
@@ -113,11 +136,11 @@ class OptimizationJob(ScineJob):
         success: bool,
         systems: dict,
         keys: List[str],
-        old_structure,
-        new_label,
+        old_structure: db.Structure,
+        new_label: db.Label,
         program_helper: Union[ProgramHelper, None],
         expected_results: Union[List[str], None] = None,
-    ):
+    ) -> db.Structure:
         """
         Checks after an optimization whether everything went well and saves information to database.
 
@@ -141,6 +164,8 @@ class OptimizationJob(ScineJob):
         program_helper :: Union[ProgramHelper, None]
             The optional helper of the employed program for postprocessing
         program_helper :: Union[List[str], None]
+            The expected results for the calculators, if not given, assumed from invoking Job class
+        expected_results :: Union[List[str], None]
             The expected results for the calculators, if not given, assumed from invoking Job class
         """
 

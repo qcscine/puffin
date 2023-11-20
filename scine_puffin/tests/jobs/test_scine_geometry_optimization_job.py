@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -31,6 +31,10 @@ class ScineGeometryOptimizationJobTest(JobTestCase):
         water = os.path.join(resource_path(), "water.xyz")
         structure = add_structure(self.manager, water, input_label)
         model = db.Model('dftb3', 'dftb3', '')
+        if input_label == db.Label.SURFACE_GUESS:
+            prop = db.VectorProperty.make("surface_atom_indices", model, [0, 1],
+                                          self.manager.get_collection("properties"))
+            structure.add_property("surface_atom_indices", prop.id())
         job = db.Job('scine_geometry_optimization')
         calculation = add_calculation(self.manager, model, job, [structure.id()])
 

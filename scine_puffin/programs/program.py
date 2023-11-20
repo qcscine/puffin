@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+from pkgutil import iter_modules
 from typing import List
+from warnings import warn
 import git
 import os
 import subprocess
@@ -50,6 +52,12 @@ class Program:
             the program.
         """
         raise NotImplementedError
+
+    @staticmethod
+    def initialize():
+        """
+        Executed at Puffin start, run once for each available program
+        """
 
     def check_install(self):
         """
@@ -146,7 +154,71 @@ class Program:
         args.append("-DPYTHON_EXECUTABLE=" + sys.executable)
         if self.settings["cmake_flags"]:
             args += self.settings["cmake_flags"].split(" ")
+        if "sphinx" not in (name for loader, name, ispkg in iter_modules()):
+            warn("Sphinx is not installed, skipping Scine documentation build")
+            args.append("-DSCINE_BUILD_DOCS=OFF")
         args.append("..")
         subprocess.run(args, env=env, check=True)
         subprocess.run(["make", "-j" + str(ncores), "install"], env=env, check=True)
         os.chdir(initial_dir)
+
+    def pip_module_source_install(self, repo_dir: str, install_dir: str):
+        initial_dir = os.getcwd()
+
+        # Handle repository
+        if os.path.exists(repo_dir):
+            repository = git.Repo(repo_dir)
+            try:
+                repository.remotes.origin.pull()
+                repository.git.submodule("update", "--init")
+            except BaseException:
+                try:
+                    repository.git.checkout("master")
+                except git.exc.GitCommandError:  # type: ignore[misc]
+                    repository.git.checkout("main")
+                repository.git.submodule("update", "--init")
+                repository.remotes.origin.pull()
+                repository.git.submodule("update", "--init")
+            finally:
+                repository.git.checkout(self.version)
+                repository.remotes.origin.pull()
+                repository.git.submodule("update", "--init")
+        else:
+            repository = git.Repo.clone_from(self.source, repo_dir)
+            repository.git.checkout(self.version)
+            repository.git.submodule("update", "--init")
+
+        build_dir = os.path.join(repo_dir, "build")
+        if build_dir and not os.path.exists(build_dir):
+            os.makedirs(build_dir)
+        os.chdir(build_dir)
+        self.pip_package_install('../.', install_dir)
+        os.chdir(initial_dir)
+
+    @staticmethod
+    def pip_package_install(package: str, install_dir: str):
+        env = os.environ.copy()
+        suffix = (
+            'python' + str(sys.version_info.major) + '.' +
+            str(sys.version_info.minor) + '/site-packages'
+        )
+        if "PYTHONPATH" in env.keys():
+            env["PYTHONPATH"] = (
+                os.path.join(install_dir, 'lib', suffix) +
+                ":" + os.path.join(install_dir, 'lib64', suffix) +
+                ":" + env["PYTHONPATH"]
+            )
+        else:
+            env["PYTHONPATH"] = (
+                os.path.join(install_dir, 'lib', suffix) +
+                ":" + os.path.join(install_dir, 'lib64', suffix)
+            )
+        subprocess.run(
+            [
+                sys.executable, '-m' + 'pip', 'install', package,
+                '--no-cache',
+                '--prefix', install_dir
+            ],
+            env=env,
+            check=True
+        )

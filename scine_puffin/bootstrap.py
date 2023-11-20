@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 import os
@@ -62,15 +62,18 @@ def bootstrap(config: Configuration):
 
     # Install minimal requirement
     print("")
-    print("Building SCINE Utils from sources.")
+    print("Building SCINE Core/Utils from sources.")
     print("")
+    core_build_dir = os.path.join(build_dir, "core")
+    core = Utils(config.programs()["core"])
+    core.install(core_build_dir, install_dir, config["resources"]["cores"])
     utils_build_dir = os.path.join(build_dir, "utils")
     utils = Utils(config.programs()["utils"])
     utils.install(utils_build_dir, install_dir, config["resources"]["cores"])
 
     # Install all other programs
     for program_name, settings in config.programs().items():
-        if program_name == "utils" or not settings["available"]:
+        if program_name in ['core', 'utils'] or not settings["available"]:
             continue
         print("")
         print("Preparing " + program_name.capitalize() + "...")
@@ -100,6 +103,22 @@ def bootstrap(config: Configuration):
             "lib64",
             "python" + str(python_version[0]) + "." + str(python_version[1]),
             "site-packages",
+        )
+        + ":"
+        + os.path.join(
+            install_dir,
+            "local",
+            "lib",
+            "python" + str(python_version[0]) + "." + str(python_version[1]),
+            "dist-packages",
+        )
+        + ":"
+        + os.path.join(
+            install_dir,
+            "local",
+            "lib64",
+            "python" + str(python_version[0]) + "." + str(python_version[1]),
+            "dist-packages",
         )
     )
     env["PATH"] = os.path.join(install_dir, "bin")

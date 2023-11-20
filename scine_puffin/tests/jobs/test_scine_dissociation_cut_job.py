@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -48,14 +48,14 @@ class ScineReactDissociationCutJobTest(JobTestCase):
             reactant_guess.set_graph(key, value)
 
         model = db.Model('dftb3', 'dftb3', '')
-        job = db.Job('scine_dissociation_cut')
+        db_job = db.Job('scine_dissociation_cut')
         settings = {
             "dissociations": dissociations,
             "charge_propensity_check": charge_propensity_check,
             "max_scf_iterations": 1000,
         }
 
-        calculation = add_calculation(self.manager, model, job, [reactant_guess.id()], settings)
+        calculation = add_calculation(self.manager, model, db_job, [reactant_guess.id()], settings)
 
         # Run calculation/job
         config = self.get_configuration()

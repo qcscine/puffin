@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -24,6 +24,11 @@ def module_exists(module_name: str) -> bool:
         return os.getenv("ORCA_BINARY_PATH") is not None
     elif module_name.lower() == "turbomole":
         return os.getenv("TURBODIR") is not None
+    elif module_name.lower() == "ams":
+        possibles = ['AMSHOME', 'AMSBIN', 'AMS_BINARY_PATH']
+        return any(os.getenv(p) is not None for p in possibles)
+    elif module_name.lower() == "mrcc":
+        return os.getenv("MRCC_BINARY_PATH") is not None
     else:
         return module_name in (name for loader, name, ispkg in iter_modules())
 
@@ -38,7 +43,8 @@ def _skip(func: Callable, error: str):
 
 def dependency_addition(dependencies: List[str]) -> List[str]:
     # allow to give scine packages without 'scine_' prefix
-    short_terms = ['readuct', 'swoose', 'sparrow', 'molassembler', 'database', 'utilities', 'kinetx', 'xtb_wrapper']
+    short_terms = ['readuct', 'swoose', 'sparrow', 'molassembler', 'database', 'utilities', 'kinetx', 'xtb_wrapper',
+                   'ams_wrapper', 'serenity_wrapper', 'dftbplus_wrapper']
     dependencies = ['scine_' + d if d in short_terms else d for d in dependencies]
     # dependencies of key as value list, only utilities must not be included
     dependency_data = {
@@ -61,12 +67,30 @@ def skip_without(*dependencies) -> Callable:
         if all(module_exists(d) for d in dependency_list):
             @wraps(f)
             def wrapped_f(*args, **kwargs):
+                calculator_import_resolve(dependency_list)
                 f(*args, **kwargs)
             return wrapped_f
         else:
             return _skip(f, "Test requires {:s}".format([d for d in dependency_list if not module_exists(d)][0]))
 
     return wrap
+
+
+def calculator_import_resolve(dependency_list: List[str]) -> None:
+    # ensure that calculators can be loaded
+    for d in dependency_list:
+        if d == "scine_sparrow":
+            import scine_sparrow  # noqa # pylint: disable=(unused-import,import-error)
+        elif d == "scine_ams_wrapper":
+            import scine_ams_wrapper  # noqa # pylint: disable=(unused-import,import-error)
+        elif d == "scine_dftbplus_wrapper":
+            import scine_dftbplus_wrapper  # noqa # pylint: disable=(unused-import,import-error)
+        elif d == "scine_serenity_wrapper":
+            import scine_serenity_wrapper  # noqa # pylint: disable=(unused-import,import-error)
+        elif d == "scine_swoose":
+            import scine_swoose  # noqa # pylint: disable=(unused-import,import-error)
+        elif d == "scine_xtb_wrapper":
+            import scine_xtb_wrapper  # noqa # pylint: disable=(unused-import,import-error)
 
 
 class JobTestCase(unittest.TestCase):
@@ -84,7 +108,9 @@ class JobTestCase(unittest.TestCase):
         if module_exists("scine_database"):
             self.manager.wipe()
         os.chdir(self.start_dir)
-        shutil.rmtree(os.path.join(os.getcwd(), "puffin_unittest_scratch"))
+        work_dir = os.path.join(os.getcwd(), "puffin_unittest_scratch")
+        if os.path.exists(work_dir):
+            shutil.rmtree(work_dir)
 
     def get_calculation(self, query: Union[Dict[str, str], None] = None):
         calculations = self.manager.get_collection("calculations")
@@ -118,6 +144,12 @@ class JobTestCase(unittest.TestCase):
         if os.getenv("CP2K_BINARY_PATH") is not None:
             config['programs']['cp2k']['available'] = True
             config['programs']['cp2k']['root'] = os.getenv("CP2K_BINARY_PATH")
+        if os.getenv("AMSHOME") is not None:
+            config['programs']['ams']['available'] = True
+            config['programs']['ams']['root'] = os.getenv("AMSHOME")
+        if os.getenv("MRCC_BINARY_PATH") is not None:
+            config['programs']['mrcc']['available'] = True
+            config['programs']['mrcc']['root'] = os.getenv("MRCC_BINARY_PATH")
 
         return config
 
@@ -125,6 +157,8 @@ class JobTestCase(unittest.TestCase):
         try:
             success = job.run(self.manager, calculation, config)
             assert success
+            job.clear()
         except BaseException as e:
             print(calculation.get_comment())
+            job.clear()
             raise e

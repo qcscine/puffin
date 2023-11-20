@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -163,10 +163,10 @@ class ScineStepRefinementJobTest(JobTestCase):
         complex_structure.link(structures)
         selection = {"label": "ts_optimized"}
         assert structures.count(json.dumps(selection)) == 2
-        assert properties.count(json.dumps({})) == 14
+        assert properties.count(json.dumps({})) == 15
         assert elementary_steps.count(json.dumps({})) == 2
         results = calculation.get_results()
-        assert len(results.property_ids) == 10
+        assert len(results.property_ids) == 11
         assert len(results.structure_ids) == 5
         assert len(results.elementary_step_ids) == 2
         # The regular elementary step should be the last one in the list.
@@ -332,10 +332,10 @@ class ScineStepRefinementJobTest(JobTestCase):
         complex_structure.link(structures)
         selection = {"label": "ts_optimized"}
         assert structures.count(json.dumps(selection)) == 2
-        assert properties.count(json.dumps({})) == 14
+        assert properties.count(json.dumps({})) == 15
         assert elementary_steps.count(json.dumps({})) == 2
         results = calculation.get_results()
-        assert len(results.property_ids) == 10
+        assert len(results.property_ids) == 11
         assert len(results.structure_ids) == 5
         assert len(results.elementary_step_ids) == 2
         # The regular elementary step should be the last one in the list.

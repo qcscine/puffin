@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -161,6 +161,8 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
         job = calculation.get_job()
 
         # New label
+        # TODO: These labels are not necessarily correct; during the optimization, a
+        # complex coul be created
         label = structure.get_label()
         if label == db.Label.MINIMUM_GUESS or label == db.Label.MINIMUM_OPTIMIZED:
             new_label = db.Label.MINIMUM_OPTIMIZED

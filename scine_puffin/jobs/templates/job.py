@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -105,7 +105,7 @@ class Job:
         """
         raise NotImplementedError
 
-    def prepare(self, job_dir: str, id):
+    def prepare(self, job_dir: str, id) -> None:
         """
         Prepares the actual job.
         This function has to be implemented by any job that shall be added to
@@ -123,7 +123,7 @@ class Job:
         if self.work_dir and not os.path.exists(self.work_dir):
             os.makedirs(self.work_dir)
 
-    def archive(self, archive: str):
+    def archive(self, archive: str) -> None:
         """
         Archives all files existent in the job's directory into tarball named
         with the job's ID. The tarball is then moved to the given destination.
@@ -147,7 +147,7 @@ class Job:
             os.makedirs(archive)
         shutil.move(tar_gen_path, tar_archive_path)
 
-    def clear(self):
+    def clear(self) -> None:
         """
         Clears the directory in which the job was run.
         """
@@ -292,7 +292,7 @@ class Job:
         self.set_calculation(calculation)
         self.config = config
 
-    def get_collections(self, manager):
+    def get_collections(self, manager) -> None:
         """
         Saves Scine Database collections as class variables
 
@@ -310,7 +310,7 @@ class Job:
         self._structures = manager.get_collection("structures")
         self._flasks = manager.get_collection("flasks")
 
-    def set_calculation(self, calculation):
+    def set_calculation(self, calculation) -> None:
         """
         Sets the current Calculation for this job and ensures connection
 
@@ -592,10 +592,10 @@ class breakable(object):
     Helper to allow breaking out of the contex manager early
 
     > with breakable(open(path)) as f:
-    >     print 'before condition'
+    >     print('before condition')
     >     if condition:
     >         raise breakable.Break
-    >     print 'after condition'
+    >     print('after condition')
     """
 
     class Break(Exception):

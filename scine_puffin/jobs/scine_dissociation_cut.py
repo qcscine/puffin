@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -145,7 +145,7 @@ class ScineDissociationCut(ReactJob):
                                                f"with '{len(rc_atoms)}' nuclei.")
 
             """ gather reactant info """
-            bond_orders = self.make_bond_orders_from_calc(self.systems, self.rc_key)
+            bond_orders, self.systems = self.make_bond_orders_from_calc(self.systems, self.rc_key)
             if not self.expected_results_check(self.systems, self.rc_key, ['energy', 'atomic_charges'])[0]:
                 self.systems, success = readuct.run_sp_task(self.systems, [self.rc_key])
                 self.throw_if_not_successful(success, self.systems, [self.rc_key], ['energy', 'atomic_charges'])
@@ -253,7 +253,7 @@ class ScineDissociationCut(ReactJob):
                     charge = lowest_combination[mol]
                     name = split_names[charge][mol]
                     product_names.append(name)
-                    graphs.append(self.make_graph_from_calc(self.systems, name))
+                    graphs.append(self.make_graph_from_calc(self.systems, name)[0])
                 joined_graph = ";".join(graphs)
                 print("Barrierless dissociation product graph:")
                 print(joined_graph)
@@ -340,7 +340,7 @@ class ScineDissociationCut(ReactJob):
             c_entry = str(list(np.array(charge_diffs) + np.array(fragment_base_charges)))
             if energy is None:
                 m_entry: Union[str, List[int]] = "Not converged"
-                e_entry = "Not converged"
+                e_entry: Union[str, float] = "Not converged"
             else:
                 m_entry = [self.systems[split_names[charge][i]].settings[utils.settings_names.spin_multiplicity]
                            for i, charge in enumerate(charge_diffs)]
@@ -361,7 +361,7 @@ class ScineDissociationCut(ReactJob):
         # store energy and bond orders for reactive complex, i.e. structure being dissociated
         start_structure = db.Structure(self._calculation.get_structures()[0], self._structures)
         self.store_energy(self.systems[self.rc_key], start_structure)
-        bond_orders = self.make_bond_orders_from_calc(self.systems, self.rc_key)
+        bond_orders, self.systems = self.make_bond_orders_from_calc(self.systems, self.rc_key)
         self.store_property(
             self._properties,
             "bond_orders",
@@ -380,15 +380,13 @@ class ScineDissociationCut(ReactJob):
             for mol, (name, energy) in enumerate(zip(names, energies)):
                 if energy is None:
                     continue
-                graph = self.make_graph_from_calc(self.systems, name)
-                if ";" in graph:
-                    rhs_structure = self.create_new_structure(self.systems[name], db.Label.COMPLEX_OPTIMIZED)
-                else:
-                    rhs_structure = self.create_new_structure(self.systems[name], db.Label.MINIMUM_OPTIMIZED)
+                graph, self.systems = self.make_graph_from_calc(self.systems, name)
+                label = self._determine_new_label_based_on_graph(self.systems[name], graph)
+                rhs_structure = self.create_new_structure(self.systems[name], label)
                 db_results.add_structure(rhs_structure.id())
                 self.transfer_properties(self.ref_structure, rhs_structure)
                 self.store_energy(self.systems[name], rhs_structure)
-                bond_orders = self.make_bond_orders_from_calc(self.systems, name)
+                bond_orders, self.systems = self.make_bond_orders_from_calc(self.systems, name)
                 self.store_property(
                     self._properties,
                     "bond_orders",

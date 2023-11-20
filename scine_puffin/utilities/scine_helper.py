@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """scine_helper.py: Collection of common procedures to be carried out in scine jobs"""
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -22,8 +22,8 @@ class SettingsManager:
 
     def __init__(
         self,
-        method_family: db.Model.method_family,
-        program: db.Model.program,
+        method_family: str,
+        program: str,
         calculator_settings: Union[dict, None] = None,
         task_settings: Union[dict, None] = None,
     ):
@@ -79,7 +79,7 @@ class SettingsManager:
             )
             return False
 
-    def separate_settings(self, calculation_settings: dict):
+    def separate_settings(self, calculation_settings: utils.ValueCollection):
         """
         Extract calculator and task settings from the given calculation settings.
         Uses the information of the settings which are available for a calculator.

@@ -6,7 +6,7 @@
 Introduction
 ------------
 
-SCINE Puffin is a calculation handler for SCINE Chemoton. Thus, it bridges the gap between high level exploration jobs for reaction networks and  basic quantum chemical calculations. Making use of the abstractions defined the SCINE Core and SCINE Utilities  modules it provides the means to define and execute jobs that generate new data for reaction networks. SCINE Puffin is designed as an instanced runner that, once bootstrapped, continuously processes requested jobs. It is built to work in containerized environments (Docker, Singularity).
+SCINE Puffin is a calculation handler for SCINE Chemoton. Thus, it bridges the gap between high level exploration jobs for reaction networks and  basic quantum chemical calculations. Making use of the abstractions defined the SCINE Core and SCINE Utilities  modules it provides the means to define and execute jobs that generate new data for reaction networks. SCINE Puffin is designed as an instanced runner that, once bootstrapped, continuously processes requested jobs. It is built to work in containerized environments (Docker, Apptainer/Singularity).
 
 License and Copyright Information
 ---------------------------------

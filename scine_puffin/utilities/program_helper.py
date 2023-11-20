@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """program_helper.py: Collection of common procedures to be carried out depending on underlying calculators"""
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -195,7 +195,7 @@ class Cp2kHelper(ProgramHelper):
                 structure.set_property(self.cutoff_name, property_id1)
                 structure.set_property(self.rel_cutoff_name, property_id2)
 
-        if property_id1 is not None:
+        if property_id1 is not None and property_id2 is not None:
             prop = db.NumberProperty(property_id1)
             prop.link(self.properties)
             cutoff = prop.get_data()

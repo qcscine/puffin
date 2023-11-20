@@ -3,10 +3,6 @@ matplotlib
 pytest
 coverage
 recommonmark
-sphinx
-sphinx_rtd_theme
-sphinx_autodoc_typehints
-sphinx_copybutton
 numpydoc
 pylint
 pylint-exit

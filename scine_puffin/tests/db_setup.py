@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 # Standard library imports
 import os
-from typing import Optional
+from typing import Any, Optional
 
 
 def get_test_db_credentials(name: str = "puffin_unittests"):
@@ -25,7 +25,7 @@ def get_test_db_credentials(name: str = "puffin_unittests"):
     Returns
     -------
     result :: db.Credentials
-        The credentials to access the test database.
+    The credentials to access the test database.
     """
     import scine_database as db
     ip = os.environ.get('TEST_MONGO_DB_IP', "127.0.0.1")
@@ -63,7 +63,7 @@ def get_clean_db(name: str = "puffin_unittests"):
     return manager
 
 
-def add_structure(manager, xyz_path, label, charge: int = 0, multiplicity: int = 1):
+def add_structure(manager, xyz_path, label, charge: int = 0, multiplicity: int = 1, model: Optional[Any] = None):
     """
     Generates a Structure in the database according to the
     specifications given as arguments.
@@ -80,6 +80,9 @@ def add_structure(manager, xyz_path, label, charge: int = 0, multiplicity: int =
         The charge of the structure
     multiplicity :: int
         The multiplicity of the structure
+    model :: db.Model, optional
+        The model of the structure to be generated. Take db.Model("dftb3", "dftb3", "") with program "Sparrow"
+        as default.
 
     Returns
     -------
@@ -87,11 +90,11 @@ def add_structure(manager, xyz_path, label, charge: int = 0, multiplicity: int =
         The generated Structure linked to its collection
     """
     import scine_database as db
-    import scine_utilities as utils
+    if model is None:
+        model = db.Model("dftb3", "dftb3", "")
+        model.program = "sparrow"
     structures = manager.get_collection("structures")
-    atoms, _ = utils.io.read(xyz_path)
-    structure = db.Structure.make(atoms, charge, multiplicity, structures)
-    structure.set_label(label)
+    structure = db.Structure.make(xyz_path, charge, multiplicity, model, label, structures)
     return structure
 
 
@@ -125,13 +128,16 @@ def add_calculation(manager, model, job, structures, settings: Optional[dict] = 
     if settings is None:
         settings = {}
     calculations = manager.get_collection("calculations")
+    if model.program.lower() == "any":
+        model.program = "sparrow"
     calculation = db.Calculation.make(model, job, structures, calculations)
     calculation.set_settings(utils.ValueCollection(settings))
     calculation.set_status(db.Status.NEW)
     return calculation
 
 
-def add_compound_and_structure(manager, xyz_file: str = "proline_acid.xyz"):
+def add_compound_and_structure(manager, xyz_file: str = "proline_acid.xyz", charge: int = 0, multiplicity: int = 1,
+                               label: Optional[Any] = None, model: Optional[Any] = None) -> Any:
     """
     Generates a Compound with one structure according to the given xyz_file.
 
@@ -141,6 +147,15 @@ def add_compound_and_structure(manager, xyz_file: str = "proline_acid.xyz"):
         The manager of the database to create data in.
     xyz_file :: str
         The xyz file name for the structure that is added
+    charge :: int
+        The charge of the structure
+    multiplicity :: int
+        The spin multiplicity of the structure
+    label :: db.Label, optional
+        The label of the structure to be generated.
+    model :: db.Model, optional
+        The model of the structure to be generated. Take db.Model("dftb3", "dftb3", "") with program "Sparrow"
+        as default.
     Returns
     -------
     compound :: db.Compound
@@ -150,13 +165,15 @@ def add_compound_and_structure(manager, xyz_file: str = "proline_acid.xyz"):
     from .resources import resource_path
     compounds = manager.get_collection("compounds")
     path = os.path.join(resource_path(), xyz_file)
-    structure = add_structure(manager, path, db.Label.MINIMUM_OPTIMIZED)
+    if label is None:
+        label = db.Label.MINIMUM_OPTIMIZED
+    structure = add_structure(manager, path, label, charge, multiplicity, model)
     new_compound = db.Compound.make([structure.id()], compounds)
     structure.set_compound(new_compound.id())
     return new_compound
 
 
-def add_flask_and_structure(manager, xyz_file: str = "proline_acid.xyz"):
+def add_flask_and_structure(manager, xyz_file: str = "proline_acid.xyz", model: Optional[Any] = None):
     """
     Generates a Flask with one structure according to the given xyz_file.
 
@@ -175,7 +192,7 @@ def add_flask_and_structure(manager, xyz_file: str = "proline_acid.xyz"):
     from .resources import resource_path
     flasks = manager.get_collection("flasks")
     path = os.path.join(resource_path(), xyz_file)
-    structure = add_structure(manager, path, db.Label.COMPLEX_OPTIMIZED)
+    structure = add_structure(manager, path, db.Label.COMPLEX_OPTIMIZED, model=model)
     new_flask = db.Flask.make([structure.id()], [], flasks)
     structure.set_compound(new_flask.id())
     return new_flask

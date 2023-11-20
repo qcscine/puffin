@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 from typing import List
-import numpy as np
 
 import scine_database as db
 
-from .templates.job import Job, breakable, calculation_context, job_configuration_wrapper
+from .templates.job import breakable, calculation_context, job_configuration_wrapper
+from .templates.kinetic_modeling_jobs import KineticModelingJob
 from ..utilities.compound_and_flask_helpers import get_compound_or_flask
 from scine_puffin.config import Configuration
 
 
-class KinetxKineticModeling(Job):
+class KinetxKineticModeling(KineticModelingJob):
     """
     A job that performs the kinetic modeling using KiNetX given a set of reactions and
     an electronic structure model. The reaction rates are calculated from transition
@@ -27,14 +27,20 @@ class KinetxKineticModeling(Job):
       ``kinetx_kinetic_modeling``
 
     **Required Input**
-      All reactions, concentrations, rate constants, etc. are parsed through the
-      settings. The numerical integration is done through KiNetX. The final and
-      maximum concentration for each compound is written to its centroid. The
-      concentrations trajectories are written to the raw output by KiNetX.
-
       model :: db.Model
          The electronic structure model to flag the new properties with.
 
+    **Required Settings**
+      aggregate_ids :: List[str]
+        The aggregate IDs (as strings).
+      reaction_ids :: List[str]
+        The reaction IDs (as strings).
+      aggregate_types :: List[int]
+        The aggregate types. 0 for compounds, 1 for flasks.
+       lhs_rates :: List[float]
+         The reaction rates for the forward reactions.
+       rhs_rates :: List[float]
+         The reaction rates for the backward reactions.
     **Optional Settings**
       Optional settings are read from the ``settings`` field, which is part of
       any ``Calculation`` stored in a SCINE Database.
@@ -52,6 +58,13 @@ class KinetxKineticModeling(Job):
       n_batches :: int
           The numerical integration is done in batches of time steps. After each step the maximum
           concentration for each compound is updated. This is the number of time-step batches.
+      energy_model_program :: str
+          The program with which the electronic structure model should be flagged. Default any.
+      convergence :: float
+          Stop the numerical integration if the concentrations do not change more than this threshold between
+          intervals.
+      concentration_label_postfix :: str
+          Post fix to the property label. Default "".
 
     **Required Packages**
       - SCINE: Database (present by default)
@@ -63,8 +76,10 @@ class KinetxKineticModeling(Job):
       generated and added to the database:
 
       Properties
-        The maximum and final concentration of each compound is added to
-        its centroid.
+        The maximum and final concentration, and the vertex flux of each aggregate is added to
+        its centroid. The edge flux, forward + backward flux for each reaction is added to the centroid of the first
+        aggregate on the reaction's LHS. Note, that the properties are NOT listed in the results to avoid large DB
+        documents.
     """
 
     def __init__(self):
@@ -99,7 +114,7 @@ class KinetxKineticModeling(Job):
             n_reactions = len(reaction_ids)
             n_aggregates = len(aggregate_id_list)
             if len(reaction_ids) != len(lhs_rates_per_reaction) or len(reaction_ids) != len(rhs_rates_per_reaction):
-                raise RuntimeError("The number of reaction rates differs from the number of reactions.")
+                raise AssertionError("The number of reaction rates differs from the number of reactions.")
             network_builder = kinetx.NetworkBuilder()
             # Prepare the data arrays / network
             network_builder.reserve(n_compounds=n_aggregates, n_reactions=n_reactions, n_channels_per_reaction=1)
@@ -122,77 +137,22 @@ class KinetxKineticModeling(Job):
                 concentration_data, reaction_flux, reaction_flux_forward, reaction_flux_backward = kinetx.integrate(
                     network, concentrations, 0.0, time_step, solver, batch_interval, n_batches, convergence)
             # Save the concentrations
+            final_concentrations = concentration_data[:, 0]
+            max_concentrations = concentration_data[:, 1]
+            flux_concentrations = concentration_data[:, 2]
             results = calculation.get_results()
-            self._write_concentrations_to_centroids(aggregate_id_list, aggregate_type_list, concentration_data,
-                                                    reaction_flux, reaction_flux_forward, reaction_flux_backward,
-                                                    reaction_ids, manager, results)
-            calculation.set_results(results)
+            self.model.program = self.settings["energy_model_program"]
+            self._write_concentrations_to_centroids(aggregate_id_list, aggregate_type_list, reaction_ids,
+                                                    [max_concentrations, final_concentrations, flux_concentrations],
+                                                    [reaction_flux, reaction_flux_forward, reaction_flux_backward],
+                                                    [self.c_max_label, self.c_final_label, self.c_flux_label],
+                                                    [self.r_flux_label, self.r_forward_label, self.r_backward_label],
+                                                    results, self.settings["concentration_label_postfix"], True)
+            # calculation.set_results(results)
             self._disable_all_aggregates()
             self.complete_job()
 
         return self.postprocess_calculation_context()
-
-    def _resolve_flask_to_compound_mapping(self, concentration_data, aggregate_id_list,
-                                           aggregate_type_list):
-        i = 0
-        new_concentration_data = np.copy(concentration_data)
-        for a_id, a_type in zip(aggregate_id_list, aggregate_type_list):
-            if a_type == db.CompoundOrFlask.FLASK:
-                flask = db.Flask(a_id, self._flasks)
-                compounds_in_flask = flask.get_compounds()
-                for c_id in compounds_in_flask:
-                    if c_id in aggregate_id_list:
-                        j = aggregate_id_list.index(c_id)
-                        new_concentration_data[j, :] += concentration_data[i, :]
-            i += 1
-        return new_concentration_data
-
-    def _write_concentrations_to_centroids(self, aggregate_id_list, aggregate_type_list, original_concentration_data,
-                                           total_reaction_flux, forward_reaction_flux, backward_reaction_flux,
-                                           reaction_ids, manager, results) -> None:
-        """
-        Write the final and maximum concentrations to the centroids of each compound.
-        """
-        self.model.program = self.settings["energy_model_program"]
-        concentration_data = self._resolve_flask_to_compound_mapping(original_concentration_data, aggregate_id_list,
-                                                                     aggregate_type_list)
-        i = 0
-        post_fix = self.settings["concentration_label_postfix"]
-        print(post_fix)
-        for a_id, a_type in zip(aggregate_id_list, aggregate_type_list):
-            aggregate = get_compound_or_flask(a_id, a_type, self._compounds, self._flasks)
-            centroid = aggregate.get_centroid(manager)
-            flux_c = concentration_data[i, 2]
-            max_c = concentration_data[i, 1]
-            final_c = concentration_data[i, 0]
-            max_concentration_label = "max_concentration" + post_fix
-            final_concentration_label = "final_concentration" + post_fix
-            concentration_flux_label = "concentration_flux" + post_fix
-            self._write_concentration_property(centroid, max_concentration_label, max_c, results)
-            self._write_concentration_property(centroid, final_concentration_label, final_c, results)
-            self._write_concentration_property(centroid, concentration_flux_label, flux_c, results)
-            i += 1
-        # Save edge flux (for the time being I will save it as a property to the centroid of the first LHS aggregate).
-        for i, r_id in enumerate(reaction_ids):
-            r_flux_total = total_reaction_flux[i, 0]
-            r_flux_forward = forward_reaction_flux[i, 0]
-            r_flux_backward = backward_reaction_flux[i, 0]
-            total_flux_label = r_id.string() + "_reaction_edge_flux" + post_fix
-            forward_flux_label = r_id.string() + "_forward_edge_flux" + post_fix
-            backward_flux_label = r_id.string() + "_backward_edge_flux" + post_fix
-            a_id = db.Reaction(r_id, self._reactions).get_reactants(db.Side.LHS)[0][0]
-            a_type = db.Reaction(r_id, self._reactions).get_reactant_types(db.Side.LHS)[0][0]
-            aggregate = get_compound_or_flask(a_id, a_type, self._compounds, self._flasks)
-            centroid = aggregate.get_centroid(manager)
-            self._write_concentration_property(centroid, total_flux_label, r_flux_total, results)
-            self._write_concentration_property(centroid, forward_flux_label, r_flux_forward, results)
-            self._write_concentration_property(centroid, backward_flux_label, r_flux_backward, results)
-
-    def _write_concentration_property(self, centroid: db.Structure, label: str, value: float, results: db.Results):
-        prop = db.NumberProperty.make(label, self.model, value, self._properties)
-        results.add_property(prop.id())
-        centroid.add_property(label, prop.id())
-        prop.set_structure(centroid.id())
 
     def _add_all_aggregates(self, aggregate_id_list: List[db.ID], aggregate_type_list: List[db.CompoundOrFlask],
                             network_builder) -> None:
@@ -258,18 +218,7 @@ class KinetxKineticModeling(Job):
             centroid = aggregate.get_centroid()
             rhs_mass += n * self._calculate_weight(centroid)
         if abs(rhs_mass - lhs_mass) > 1e-6:
-            raise RuntimeError("Unbalanced masses in reaction. You are destroying/creating atoms!")
-
-    def _disable_all_aggregates(self):
-        """
-        Disable the exploration of all aggregates.
-        """
-        for compound in self._compounds.iterate_all_compounds():
-            compound.link(self._compounds)
-            compound.disable_exploration()
-        for flask in self._flasks.iterate_all_flasks():
-            flask.link(self._flasks)
-            flask.disable_exploration()
+            raise AssertionError("Unbalanced masses in reaction. You are destroying/creating atoms!")
 
     @staticmethod
     def required_programs():

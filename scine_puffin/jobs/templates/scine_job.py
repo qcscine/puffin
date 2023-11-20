@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
-from typing import List, Tuple, Union
+from typing import List, Tuple, Optional
+
+import scine_database as db
+import scine_utilities as utils
 
 from .job import Job, job_configuration_wrapper
 from scine_puffin.config import Configuration
 from scine_puffin.utilities.scine_helper import SettingsManager, update_model
 from scine_puffin.utilities.program_helper import ProgramHelper
+from scine_puffin.utilities.transfer_helper import TransferHelper
 
 
 class ScineJob(Job):
@@ -22,14 +26,12 @@ class ScineJob(Job):
 
     def __init__(self):
         super().__init__()
-        self.name = "ScineJob"  # to be overwritten by child class
+        self.name = self.__class__.__name__
         self.own_expected_results = []  # to be overwritten by child class
         # to be added by child class:
         self.properties_to_transfer = [
             "surface_atom_indices",
             "slab_dict",
-            "slab_formula",
-            "primitive_lattice",
         ]
         self._fallback_error = "Error: " + self.name + " failed with an unspecified error."
 
@@ -60,7 +62,7 @@ class ScineJob(Job):
         """See Job.required_programs()"""
         raise NotImplementedError
 
-    def create_helpers(self, structure) -> Tuple[SettingsManager, Union[ProgramHelper, None]]:
+    def create_helpers(self, structure: db.Structure) -> Tuple[SettingsManager, Optional[ProgramHelper]]:
         """
         Creates a Scine SettingsManager and ProgramHelper based on the configured job and the given structure.
         The ProgramHelper is None if no ProgramHelper is specified for the specified program or no program was
@@ -77,11 +79,11 @@ class ScineJob(Job):
 
         Returns
         -------
-        helper_tuple :: Tuple[SettingsManager, Union[ProgramHelper, None]
+        helper_tuple :: Tuple[SettingsManager, Optional[ProgramHelper]
             A tuple of the SettingsManager for Scine Calculators and ProgramHelper if available.
         """
         model = self._calculation.get_model()
-        program = model.program if model.program != "any" else ""
+        program = model.program if model.program.lower() != "any" else ""
         settings_manager = SettingsManager(model.method_family, program)
         program_helper = ProgramHelper.get_correct_helper(program, self._manager, structure, self._calculation)
         return settings_manager, program_helper
@@ -98,7 +100,7 @@ class ScineJob(Job):
         success: bool,
         systems: dict,
         keys: List[str],
-        expected_results: Union[List[str], None] = None,
+        expected_results: Optional[List[str]] = None,
         sub_task_error_line: str = "",
     ) -> None:
         """
@@ -117,7 +119,7 @@ class ScineJob(Job):
             The dictionary holding calculators.
         keys :: List[str]
             The list of keys of the systems dict to be checked.
-        expected_results :: Union[List[str], None]
+        expected_results :: Optional[List[str]]
             The results to be required to be present in systems to qualify as successful calculations. If None is
             given, this defaults to the expected results of the class, see expected_results().
         sub_task_error_line :: str
@@ -139,7 +141,7 @@ class ScineJob(Job):
         success: bool,
         systems: dict,
         keys: List[str],
-        expected_results: Union[List[str], None] = None,
+        expected_results: Optional[List[str]] = None,
     ):
         """
         Performs a verification protocol that a Scine Calculation was successful. If not throws an exception,
@@ -159,7 +161,7 @@ class ScineJob(Job):
             The dictionary holding calculators.
         keys :: List[str]
             The list of keys of the systems dict to be checked.
-        expected_results :: Union[List[str], None]
+        expected_results :: Optional[List[str]]
             The results to be required to be present in systems to qualify as successful calculations. If None is
             given, this defaults to the expected results of the class, see expected_results().
         """
@@ -198,7 +200,7 @@ class ScineJob(Job):
         self,
         systems: dict,
         keys: List[str],
-        expected_results: Union[List[str], None] = None,
+        expected_results: Optional[List[str]] = None,
     ) -> Tuple[bool, str]:
         """
         Checks the results of the given systems based on the expected results. If the expected results are not given,
@@ -216,7 +218,7 @@ class ScineJob(Job):
             The dictionary holding calculators.
         keys :: List[str]
             The list of keys of the systems dict to be checked.
-        expected_results :: Union[List[str], None]
+        expected_results :: Optional[List[str]]
             The results to be required to be present in systems to qualify as successful calculations. If None is
             given, this defaults to the expected results of the class, see expected_results().
 
@@ -231,6 +233,8 @@ class ScineJob(Job):
         for key in keys:
             if key not in systems:
                 return False, (key + " is missing in systems!")
+            if systems[key] is None:
+                return False, ""
             # check if desired results are present
             if not systems[key].has_results():
                 return False, ("System '" + key + "' is missing results!")
@@ -240,7 +244,7 @@ class ScineJob(Job):
                     return False, (expected + " is missing in results!")
         return True, ""
 
-    def store_energy(self, system, structure):
+    def store_energy(self, system: utils.core.Calculator, structure: db.Structure) -> None:
         """
         Stores an 'electronic_energy' property for the given structure based on the energy in the results of the given
         system. Does not perform checks.
@@ -266,9 +270,14 @@ class ScineJob(Job):
             structure,
         )
 
-    def transfer_properties(self, old_structure, new_structure):
+    def transfer_properties(self, old_structure: db.Structure, new_structure: db.Structure,
+                            transfer_helper: Optional[TransferHelper] = None) -> None:
         """
         Copies property IDs from one structure to another one based on the specified properties in the class member.
+
+        Notes
+        -----
+        * Requires run configuration
 
         Parameters
         ----------
@@ -276,21 +285,24 @@ class ScineJob(Job):
             The structure holding the properties. If a specified property is not present for the structure,
             no error is given.
         new_structure :: db.Structure (Scine::Database::Structure)
-            The structure for which the property is to be added.
+            The structure for which the properties are to be added.
+        transfer_helper :: Optional[TransferHelper]
+            An optional helper for more difficult transfer task. Otherwise, the specified properties are just copied.
         """
         properties_to_transfer = list(set(self.properties_to_transfer))  # make sure no duplicates
-        for prop in properties_to_transfer:
-            if old_structure.has_property(prop):
-                prop_id = old_structure.get_property(prop)
-                new_structure.set_property(prop, prop_id)
+        if transfer_helper is None:
+            for prop in properties_to_transfer:
+                TransferHelper.simple_transfer(old_structure, new_structure, prop)
+        else:
+            transfer_helper.transfer_properties(old_structure, new_structure, properties_to_transfer)
 
     def sp_postprocessing(
         self,
         success: bool,
         systems: dict,
         keys: List[str],
-        structure,
-        program_helper: Union[ProgramHelper, None],
+        structure: db.Structure,
+        program_helper: Optional[ProgramHelper],
     ):
         """
         Performs a verification and results saving protocol for a Scine Single Point Calculation.
@@ -361,3 +373,21 @@ class ScineJob(Job):
 
         if program_helper is not None:
             program_helper.calculation_postprocessing(self._calculation, structure)
+
+    def get_calculation(self) -> db.Calculation:
+        """
+        Getter for the current calculation. Throws if not configured.
+
+        Notes
+        -----
+        * Requires run configuration
+        * May throw Exception
+
+        Returns
+        -------
+        calculation :: db.Calculation (Scine::Database::Calculation)
+            The current calculation being carried out.
+        """
+        if self._calculation is None:
+            self.raise_named_exception("Job is not configured and does not hold a calculation right now")
+        return self._calculation

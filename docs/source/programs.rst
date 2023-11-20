@@ -27,6 +27,10 @@ SCINE: Sparrow
 ``````````````
 .. autoclass:: scine_puffin.programs.sparrow.Sparrow
 
+SCINE: Parrot
+`````````````
+.. autoclass:: scine_puffin.programs.parrot.Parrot
+
 Serenity
 ````````
 .. autoclass:: scine_puffin.programs.serenity.Serenity

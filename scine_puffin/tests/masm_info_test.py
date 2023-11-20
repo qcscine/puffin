@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -14,7 +14,7 @@ try:
     import scine_database as db
     import scine_molassembler as masm
     import scine_utilities as utils
-    from scine_puffin.utilities.masm_helper import add_masm_info, _modify_based_on_distances
+    from scine_puffin.utilities.masm_helper import add_masm_info, get_molecules_result, _modify_based_on_distances
 except ImportError:
     pass
 else:
@@ -22,8 +22,8 @@ else:
         def __init__(self, *args, **kwargs):
             super(MasmHelperTests, self).__init__(*args, **kwargs)
             self.settings = {
-                "sub_based_on_distance_connectivity": False,
-                "add_based_on_distance_connectivity": False,
+                "sub_based_on_distance_connectivity": True,
+                "add_based_on_distance_connectivity": True,
             }
 
         class MockStructure(object):
@@ -162,3 +162,105 @@ H      1.2803094572    2.2175610336   21.7011317394
             assert "masm_decision_list" in structure.graph_dict
             assert "masm_cbor_graph" in structure.graph_dict
             assert "masm_idx_map" in structure.graph_dict
+
+        def test_split_surface_structure(self):
+            xyz_file_content = """81
+
+Cu     1.0719532500    1.0719532500   35.0171395000
+Cu     1.0719532500    5.3597662500   35.0171395000
+Cu     5.3597662500    1.0719532500   35.0171395000
+Cu     5.3597662500    5.3597662500   35.0171395000
+Cu     3.2158597500    1.0719532500   32.8732330000
+Cu     3.2158597500    5.3597662500   32.8732330000
+Cu     7.5036727500    1.0719532500   32.8732330000
+Cu     7.5036727500    5.3597662500   32.8732330000
+Cu     1.0719532500    3.2158597500   32.8732330000
+Cu     1.0719532500    7.5036727500   32.8732330000
+Cu     5.3597662500    3.2158597500   32.8732330000
+Cu     5.3597662500    7.5036727500   32.8732330000
+Cu     3.2158597500    3.2158597500   35.0171395000
+Cu     3.2158597500    7.5036727500   35.0171395000
+Cu     7.5036727500    3.2158597500   35.0171395000
+Cu     7.5036727500    7.5036727500   35.0171395000
+O      2.1439065000    2.1439065000   33.9451862500
+O      2.1439065000    6.4317195000   33.9451862500
+O      6.4317195000    2.1439065000   33.9451862500
+O      6.4317195000    6.4317195000   33.9451862500
+O      0.0000000000    0.0000000000   36.0890927500
+O      0.0000000000    4.2878130000   36.0890927500
+O      4.2878130000    0.0000000000   36.0890927500
+O      4.2878130000    4.2878130000   36.0890927500
+Cu     1.0719532500    1.0719532500   39.3049525000
+Cu     1.0719532500    5.3597662500   39.3049525000
+Cu     5.3597662500    1.0719532500   39.3049525000
+Cu     5.3597662500    5.3597662500   39.3049525000
+Cu     3.2158597500    1.0719532500   37.1610460000
+Cu     3.2158597500    5.3597662500   37.1610460000
+Cu     7.5036727500    1.0719532500   37.1610460000
+Cu     7.5036727500    5.3597662500   37.1610460000
+Cu     1.0719532500    3.2158597500   37.1610460000
+Cu     1.0719532500    7.5036727500   37.1610460000
+Cu     5.3597662500    3.2158597500   37.1610460000
+Cu     5.3597662500    7.5036727500   37.1610460000
+Cu     3.2158597500    3.2158597500   39.3049525000
+Cu     3.2158597500    7.5036727500   39.3049525000
+Cu     7.5036727500    3.2158597500   39.3049525000
+Cu     7.5036727500    7.5036727500   39.3049525000
+O      2.1439065000    2.1439065000   38.2329992500
+O      2.1439065000    6.4317195000   38.2329992500
+O      6.4317195000    2.1439065000   38.2329992500
+O      6.4317195000    6.4317195000   38.2329992500
+O      0.0000000000    0.0000000000   40.3769057500
+O      0.0000000000    4.2878130000   40.3769057500
+O      4.2878130000    0.0000000000   40.3769057500
+O      4.2878130000    4.2878130000   40.3769057500
+Cu     1.0719532500    1.0719532500   43.5927655000
+Cu     1.0719532500    5.3597662500   43.5927655000
+Cu     5.3597662500    1.0719532500   43.5927655000
+Cu     5.3597662500    5.3597662500   43.5927655000
+Cu     3.2158597500    1.0719532500   41.4488590000
+Cu     3.2158597500    5.3597662500   41.4488590000
+Cu     7.5036727500    1.0719532500   41.4488590000
+Cu     7.5036727500    5.3597662500   41.4488590000
+Cu     1.0719532500    3.2158597500   41.4488590000
+Cu     1.0719532500    7.5036727500   41.4488590000
+Cu     5.3597662500    3.2158597500   41.4488590000
+Cu     5.3597662500    7.5036727500   41.4488590000
+Cu     3.2158597500    3.2158597500   43.5927655000
+Cu     3.2158597500    7.5036727500   43.5927655000
+Cu     7.5036727500    3.2158597500   43.5927655000
+Cu     7.5036727500    7.5036727500   43.5927655000
+O      2.1439065000    2.1439065000   42.5208122500
+O      2.1439065000    6.4317195000   42.5208122500
+O      6.4317195000    2.1439065000   42.5208122500
+O      6.4317195000    6.4317195000   42.5208122500
+O      0.0000000000    0.0000000000   44.6647187500
+O      0.0000000000    4.2878130000   44.6647187500
+O      4.2878130000    0.0000000000   44.6647187500
+O      4.2878130000    4.2878130000   44.6647187500
+C      7.8374544210    6.0029380451   47.2231590235
+C      6.3856957891    6.3093735268   47.1847260085
+C      5.8568798291    7.5383134573   46.9965352261
+H      8.1063386427    5.4638831305   48.1468080782
+H      8.1035125720    5.3095234924   46.3964106616
+H      8.4554510178    6.9063900636   47.1308283651
+H      5.7020734826    5.4626932681   47.3117261503
+H      4.7827542159    7.7098942445   46.9898841604
+H      6.5007646914    8.4087043392   46.8529728506
+            """
+            pbc = utils.PeriodicBoundaries("16.205584494355413,16.205584494355413,145.85026044919871,90.0,90.0,90.0")
+            ac, bo = self.read_fake_files(xyz_file_content, "test_surface_split.xyz")
+            surface_indices = set(range(72))
+            bo = utils.SolidStateBondDetector.detect_bonds(ac, pbc, surface_indices)
+            structure = self.MockStructure(ac)
+            model = db.Model("FAKE", "", "")
+            model.periodic_boundaries = str(pbc)
+            structure.set_model(model)
+            mol_results = get_molecules_result(ac, bo, self.settings, str(pbc), surface_indices)
+            assert len(mol_results.molecules) == 2
+            add_masm_info(structure, bo, self.settings, surface_indices)
+            assert "masm_decision_list" in structure.graph_dict
+            assert "masm_cbor_graph" in structure.graph_dict
+            assert "masm_idx_map" in structure.graph_dict
+            cbor = structure.graph_dict['masm_cbor_graph']
+            assert cbor.count(';') == 1

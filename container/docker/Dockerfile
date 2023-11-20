@@ -30,28 +30,31 @@ ENV LD_LIBRARY_PATH=/opt/intel/oneapi/mkl/latest/lib/intel64:$LD_LIBRARY_PATH
 ENV MKLROOT=/opt/intel/oneapi/mkl/latest
 
 # Install Cython
-RUN pip3 install Cython pythran
+RUN pip3 install Cython==0.29.36 pythran
 
 # Install numpy
+WORKDIR /
 RUN git clone https://github.com/numpy/numpy.git numpy
-RUN cd numpy ; \
-  cp site.cfg.example site.cfg ; \
+WORKDIR /numpy
+RUN git checkout v1.24.2
+RUN git submodule update --init
+RUN cp site.cfg.example site.cfg ; \
   echo "\n[mkl]" >> site.cfg ; \
   echo "include_dirs = /opt/intel/oneapi/mkl/latest/lib/intel64/" >> site.cfg ; \
   echo "library_dirs = /opt/intel/oneapi/mkl/latest/lib/intel64/" >> site.cfg ; \
   echo "mkl_libs = mkl_rt" >> site.cfg ; \
   echo "lapack_libs =" >> site.cfg
-RUN cd numpy ; git submodule update --init
-RUN cd numpy ; python3 setup.py build --fcompiler=gnu95
-RUN cd numpy ; python3 setup.py install
-RUN rm -rf numpy
+RUN python3 setup.py build --fcompiler=gnu95
+RUN python3 setup.py install
 
 # Install scipy
+WORKDIR /
 RUN git clone https://github.com/scipy/scipy.git scipy
-RUN cd scipy ; git submodule update --init
-RUN cd scipy ; python3 setup.py build
-RUN cd scipy ; python3 setup.py install
-RUN rm -rf scipy
+WORKDIR /scipy
+RUN git checkout v1.10.1
+RUN git submodule update --init
+RUN python3 setup.py build
+RUN python3 setup.py install
 
 # Install MongoDB C++ bindings
 RUN wget https://github.com/mongodb/mongo-c-driver/releases/download/1.17.3/mongo-c-driver-1.17.3.tar.gz

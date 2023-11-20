@@ -36,3 +36,10 @@ docs/source/generated/
 
 #VSCode
 .vscode/
+
+# unittests
+puffin_unittest_scratch/
+
+# puffin instance
+puffin.yaml
+puffin.sh

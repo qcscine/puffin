@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -257,16 +257,27 @@ def check_setup(config: Configuration) -> Dict[str, str]:
     if scine_database is None:
         print("Missing SCINE Utilities, please bootstrap Puffin.")
         sys.exit(1)
-    scine_database = util.find_spec("scine_readuct")
-    if scine_database is None:
-        print("Missing SCINE ReaDuct, please bootstrap Puffin.")
-        sys.exit(1)
+    scine_readuct = util.find_spec("scine_readuct")
+    if scine_readuct is None:
+        print("SCINE ReaDuct is not available for Puffin. Note that this will disable nearly all exploration jobs.")
 
     # Generate the list of available programs
     available_programs = []
     for program_name, settings in config.programs().items():
         if settings["available"]:
             available_programs.append(program_name)
+
+    if scine_readuct is None and "readuct" in available_programs:
+        raise RuntimeError("SCINE ReaDuct was not found by Puffin but is set as available in the run configuration.\n"
+                           "Please make sure that SCINE ReaDuct is installed properly, bootstrap Puffin, or disable\n"
+                           "SCINE ReaDuct in the run configuration.")
+
+    # Initialize all available programs
+    for program_name in available_programs:
+        class_name = "".join([s.capitalize() for s in program_name.split("_")])
+        module = import_module("scine_puffin.programs." + program_name)
+        class_ = getattr(module, class_name)
+        class_.initialize()
 
     # Gather list of all jobs
     all_jobs = []
@@ -368,6 +379,7 @@ def _loop_impl(
                     os.remove(stop_file)
                 except FileNotFoundError:
                     pass
+
             _log(config, "Detected stop file " + stop_file + " and stopped puffin.")
             break
 
@@ -570,6 +582,14 @@ def _job_execution(config: Configuration, job_class: type, manager, calculation,
     # Prepare job directory and start timer
     start = datetime.now()
     job.prepare(config["daemon"]["job_dir"], calculation.id())
+    # Initialize programs that need initialization
+    for program_name, settings in config.programs().items():
+        if settings["available"]:
+            # Initialize all available programs
+            class_name = "".join([s.capitalize() for s in program_name.split("_")])
+            module = import_module("scine_puffin.programs." + program_name)
+            class_ = getattr(module, class_name)
+            class_.initialize()
     # Run job
     success = job.run(manager, calculation, config)
     # we already write a runtime in case puffin fails during copying operations

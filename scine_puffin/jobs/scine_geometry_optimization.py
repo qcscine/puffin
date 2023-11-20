@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 from scine_puffin.config import Configuration
 from .templates.job import calculation_context, job_configuration_wrapper
 from .templates.scine_optimization_job import OptimizationJob
+from .templates.scine_connectivity_job import ConnectivityJob
 
 
-class ScineGeometryOptimization(OptimizationJob):
+class ScineGeometryOptimization(OptimizationJob, ConnectivityJob):
     """
     A job optimizing the geometry of a given structure, in search of a local
     minimum on the potential energy surface.
@@ -81,17 +82,17 @@ class ScineGeometryOptimization(OptimizationJob):
 
     @job_configuration_wrapper
     def run(self, manager, calculation, config: Configuration) -> bool:
+        self.run_geometry_optimization(calculation, config)
+        return self.postprocess_calculation_context()
 
+    def run_geometry_optimization(self, calculation, config):
         import scine_database as db
         import scine_readuct as readuct
+        from scine_utilities import settings_names as sn
 
         # preprocessing of structure
         structure = db.Structure(calculation.get_structures()[0], self._structures)
         settings_manager, program_helper = self.create_helpers(structure)
-        try:
-            new_label = self.determine_new_label(structure)
-        except BaseException:
-            return False
 
         # actual calculation
         with calculation_context(self):
@@ -100,10 +101,35 @@ class ScineGeometryOptimization(OptimizationJob):
             )
             if program_helper is not None:
                 program_helper.calculation_preprocessing(systems[keys[0]], calculation.get_settings())
+            optimize_cell: bool = "unitcelloptimizer" in settings_manager.task_settings \
+                                  and settings_manager.task_settings["unitcelloptimizer"]
             systems, success = readuct.run_opt_task(systems, keys, **settings_manager.task_settings)
 
-            self.optimization_postprocessing(
+            if optimize_cell:
+                # require to change the calculator settings, to avoid model completion failure
+                model = calculation.get_model()
+                old_pbc = model.periodic_boundaries
+                new_pbc = systems[keys[0]].settings[sn.periodic_boundaries]
+                systems[keys[0]].settings[sn.periodic_boundaries] = old_pbc
+
+            # Graph generation
+            if success:
+                graph, systems = self.make_graph_from_calc(systems, keys[0])
+                new_label = self.determine_new_label(structure, graph)
+            else:
+                new_label = db.Label.IRRELEVANT
+
+            if graph:
+                structure.set_graph("masm_cbor_graph", graph)
+
+            t = self.optimization_postprocessing(
                 success, systems, keys, structure, new_label, program_helper
             )
 
-        return self.postprocess_calculation_context()
+            if optimize_cell:
+                # update model of new structure to match the optimized unit cell
+                new_structure = db.Structure(calculation.get_results().structure_ids[0], self._structures)
+                model = new_structure.get_model()
+                model.periodic_boundaries = new_pbc
+                new_structure.set_model(model)
+            return t

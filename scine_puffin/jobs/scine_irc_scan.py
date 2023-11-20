@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -31,11 +31,11 @@ class ScineIrcScan(OptimizationJob):
       stop_on_error :: bool
          If ``False``, the optimization does not need to fully converge but will
          be accepted as a success even if it reaches the maximum amounts of
-         optimization cycles. Also the resulting structures will be flagged as
+         optimization cycles. Also, the resulting structures will be flagged as
          ``minimum_guess`` if this option is set ot be ``False``.
          (Default: ``True``)
       irc_mode :: int
-         The mode to follow during the IRC scan. By default the first mode (0).
+         The mode to follow during the IRC scan. By default, the first mode (0).
          (mode with the larges imaginary frequency will be followed).
 
       All settings that are recognized by the SCF program chosen.
@@ -97,9 +97,10 @@ class ScineIrcScan(OptimizationJob):
                 self.raise_named_exception(results_err)
             scine_helper.update_model(systems[keys[0]], self._calculation, config)
 
-            label = db.Label.MINIMUM_OPTIMIZED
+            is_surface = structure.has_property("surface_atom_indices")
+            label = db.Label.SURFACE_OPTIMIZED if is_surface else db.Label.MINIMUM_OPTIMIZED
             if not success and not stop_on_error:
-                label = db.Label.MINIMUM_GUESS
+                label = db.Label.SURFACE_GUESS if is_surface else db.Label.MINIMUM_GUESS
                 calculation.set_comment(
                     "Optimization did not fully converge for one or both sides. 'forward' and "
                     "'backward' structures are stored as '"

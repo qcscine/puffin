@@ -1,6 +1,30 @@
 Changelog
 =========
 
+Release 1.3.0
+-------------
+
+New Features:
+    - Store found elementary step even if none of the endpoints corresponds to the initial starting structures
+    - Add restart information with valid TS for jobs trying to find new elementary steps, where the IRC failed to produce different endpoints
+    - Consider potential surface structures for label determination of new structures
+    - Logic to transfer indices information and other complex properties from reactants to products
+    - Save close lying spin multiplicities and allow to manipulate exact spin propensity
+      check behavior with added settings
+
+New Jobs:
+    - Microkinetic modeling with the program Reaction Mechanism Simulator.
+
+New interfaced programs
+    - AMS via SCINE AMS Wrapper
+    - MRCC (release version March 2022)
+
+Bug fixes:
+    - Ensure that `only_distance_connectivity` is adhered in all reaction jobs
+
+Other:
+    - Update address in license
+
 Release 1.2.0
 -------------
 

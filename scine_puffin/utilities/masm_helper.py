@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """masm_helper.py: Collection of common procedures to be carried out with molassembler"""
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import math
+import sys
 
 import scine_database as db
 import scine_molassembler as masm
@@ -18,7 +20,7 @@ def get_molecules_result(
     bond_orders: utils.BondOrderCollection,
     connectivity_settings: Dict[str, Union[bool, int]],
     pbc_string: str = "",
-    unimportant_atoms: Union[List[int], Set[int], None] = None,
+    unimportant_atoms: Optional[Union[List[int], Set[int]]] = None,
     modifications: Optional[List[Tuple[int, int, float]]] = None,
 ) -> masm.interpret.MoleculesResult:
     """
@@ -33,11 +35,11 @@ def get_molecules_result(
     bond_orders :: utils.BondOrderCollection
         The bond order collection to be interpreted.
     connectivity_settings :: Dict[str, Union[bool, int]]
-        Settings describing whether to use the connectivity as predicted based on inter-
-        atomic distances by the utils.BondDetector.
+        Settings describing whether to use the connectivity as predicted based on inter-atomic distances
+        by the utils.BondDetector.
     pbc_string :: str
         The string specifying periodic boundaries, empty string represents no periodic boundaries.
-    unimportant_atoms :: Union[List[int], None]
+    unimportant_atoms :: Optional[Union[List[int], Set[int]]]
         The indices of atoms for which no stereopermutators shall be determined.
     modifications :: Optional[List[Tuple[int, int, float]]]
         Manual bond modifications. They are specified as a list with each element containing the
@@ -127,17 +129,14 @@ def get_cbor_graph_from_molecule(molecule: masm.Molecule):
         The cbor graph string.
     """
 
-    from copy import copy
-    canonical = copy(molecule)
+    canonical = deepcopy(molecule)
     canonical.canonicalize(masm.AtomEnvironmentComponents.All)
     serialization = masm.JsonSerialization(canonical)
     try:
         serialization.to_molecule()
-    except Exception as e:
-        exception_str = "Irreversible serialization/deserialization pair: " + str(e)
-        print("Non-canonical molecule serialization:")
-        print(masm.JsonSerialization(molecule))
-        raise RuntimeError(exception_str) from e
+    except BaseException:
+        sys.stderr.write("Non-canonical molecule serialization. Saving non-canonical\n")
+        serialization = masm.JsonSerialization(molecule)
 
     binary = serialization.to_binary(masm.JsonSerialization.BinaryFormat.CBOR)
     cbor_string = masm.JsonSerialization.base_64_encode(binary)
@@ -150,7 +149,7 @@ def get_cbor_graph(
     bond_orders: utils.BondOrderCollection,
     connectivity_settings: Dict[str, Union[bool, int]],
     pbc_string: str = "",
-    unimportant_atoms: Union[List[int], None] = None,
+    unimportant_atoms: Optional[Union[List[int], Set[int]]] = None,
 ) -> str:
     """
     Generates the CBOR graph of an atom collection and bond order collection.
@@ -163,11 +162,11 @@ def get_cbor_graph(
     bond_orders :: utils.BondOrderCollection
         The bond order collection to be interpreted.
     connectivity_settings :: Dict[str, Union[bool, int]]
-        Settings describing whether to use the connectivity as predicted based on inter-
-        atomic distances by the utils.BondDetector.
+        Settings describing whether to use the connectivity as predicted based on inter-atomic distances
+        by the utils.BondDetector.
     pbc_string :: str
         The string specifying periodic boundaries, empty string represents no periodic boundaries.
-    unimportant_atoms :: Union[List[int], None]
+    unimportant_atoms :: Optional[Union[List[int], Set[int]]]
         The indices of atoms for which no stereopermutators shall be determined.
 
     Returns
@@ -234,8 +233,8 @@ def get_decision_lists(
     bond_orders: utils.BondOrderCollection,
     connectivity_settings: Dict[str, Union[bool, int]],
     pbc_string: str = "",
-    unimportant_atoms: Union[List[int], None] = None,
-):
+    unimportant_atoms: Optional[Union[Set[int], List[int]]] = None,
+) -> List[str]:
     """
     Generates the dihedral decision lists for rotatable bonds in a given system.
 
@@ -246,8 +245,8 @@ def get_decision_lists(
     bond_orders :: utils.BondOrderCollection
         The bond order collection to be interpreted.
     connectivity_settings :: Dict[str, Union[bool, int]]
-        Settings describing whether to use the connectivity as predicted based on inter-
-        atomic distances by the utils.BondDetector.
+        Settings describing whether to use the connectivity as predicted based on inter-atomic distances
+        by the utils.BondDetector.
     pbc_string :: str
         The string specifying periodic boundaries, empty string represents no periodic boundaries.
     unimportant_atoms :: Union[List[int], None]
@@ -272,7 +271,7 @@ def add_masm_info(
     structure: db.Structure,
     bo_collection: utils.BondOrderCollection,
     connectivity_settings: Dict[str, Union[bool, int]],
-    unimportant_atoms: Union[List[int], None] = None,
+    unimportant_atoms: Union[List[int], Set[int], None] = None,
 ):
     """
     Generates a structure's CBOR graph and decision lists and adds them to the
@@ -285,19 +284,26 @@ def add_masm_info(
     bo_collection :: utils.BondOrderCollection
         The bond order collection to be interpreted.
     connectivity_settings :: Dict[str, Union[bool, int]]
-        Settings describing whether to use the connectivity as predicted based on inter-
-        atomic distances by the utils.BondDetector.
+        Settings describing whether to use the connectivity as predicted based on inter-atomic distances
+        by the utils.BondDetector.
     unimportant_atoms :: Union[List[int], None]
         The indices of atoms for which no stereopermutators shall be determined.
     """
     pbc_string = structure.get_model().periodic_boundaries
     atoms = structure.get_atoms()
-    masm_results = get_molecules_result(atoms, bo_collection, connectivity_settings, pbc_string, unimportant_atoms)
+    try:
+        masm_results = get_molecules_result(atoms, bo_collection, connectivity_settings, pbc_string, unimportant_atoms)
+    except BaseException as e:
+        if structure.get_label() == db.Label.TS_OPTIMIZED:
+            print("Molassembler could not generate a graph for TS as it is designed for Minima")
+            return
+        raise e
     # Split the atom collection into separate collections for each molecule
     positions = masm_results.component_map.apply(atoms)
 
     properties: List[Dict[str, Any]] = [{"component": i} for i in range(len(masm_results.molecules))]
-    atom_map = [tuple(masm_results.component_map.apply(i)) for i in range(len(atoms))]
+    atom_map: List[masm.interpret.ComponentMap.ComponentIndexPair] = [masm_results.component_map.apply(i)
+                                                                      for i in range(len(atoms))]
 
     for i, m in enumerate(masm_results.molecules):
         ordering = m.canonicalize(masm.AtomEnvironmentComponents.All)

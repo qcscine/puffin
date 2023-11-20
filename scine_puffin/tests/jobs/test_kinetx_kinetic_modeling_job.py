@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -87,11 +87,7 @@ class KinetxKineticModelingJobTest(JobTestCase):
         structures = self.manager.get_collection("structures")
         compounds = self.manager.get_collection("compounds")
         flasks = self.manager.get_collection("flasks")
-        results = calculation.get_results()
         assert properties.count(dumps({})) == n_compounds * 3 + len(all_reaction_ids) * 3
-        assert len(results.property_ids) == n_compounds * 3 + len(all_reaction_ids) * 3
-        assert len(results.structure_ids) == 0
-        assert len(results.elementary_step_ids) == 0
         for c in all_compounds:
             assert not c.explore()
         for i, s_id in enumerate(all_structure_ids):

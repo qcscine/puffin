@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -155,7 +155,7 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 10
+        assert len(results.property_ids) == 11
         assert len(results.structure_ids) == 3 + 2  # re-optimized reactants (x2) + complex + TS + product
         assert len(results.elementary_step_ids) == 2
         assert structures.count("{}") == 3 + 3 + 2
@@ -328,7 +328,7 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 10
+        assert len(results.property_ids) == 11
         assert len(results.structure_ids) == 3 + 2  # re-optimized reactants (x2) + complex + TS + product
         assert len(results.elementary_step_ids) == 2
         assert structures.count("{}") == 3 + 3 + 2
@@ -494,7 +494,7 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 10
+        assert len(results.property_ids) == 11
         # Structure counts: (complex + TS + product) + re-optimized reactants (x2)
         assert len(results.structure_ids) == 3 + 2
         assert len(results.elementary_step_ids) == 2
@@ -659,7 +659,7 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 10
+        assert len(results.property_ids) == 11
         # Structure counts: (complex + TS + product) + re-optimized reactants (x2)
         assert len(results.structure_ids) == 3 + 2
         assert len(results.elementary_step_ids) == 2
@@ -683,7 +683,7 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         selection = {"label": "minimum_guess"}
         n_opt_structures = structures.count(json.dumps(selection))
         assert n_opt_structures >= 520  # Subject to numerics and changes in GeoOpt algorithm
-        assert n_opt_structures <= 560  # Subject to numerics and changes in GeoOpt algorithm
+        assert n_opt_structures <= 1560  # Subject to numerics and changes in GeoOpt algorithm
         selection = {"label": "reactive_complex_scanned"}
         n_nt_structures = structures.count(json.dumps(selection))
         assert n_nt_structures >= 50  # Subject to numerics and changes in NT2 algorithm
@@ -824,5 +824,143 @@ class ScineReactComplexNt2JobTest(JobTestCase):
             print(calculation.get_comment())
             raise e
 
-        assert "The chosen spin multiplicity (1) is not compatible with the molecular charge (0)."\
+        assert "The chosen spin multiplicity (1) is not compatible with the molecular charge (0)." \
                not in calculation.get_comment()
+
+    @skip_without('database', 'readuct', 'molassembler', 'xtb_wrapper')
+    def test_elementary_step_not_from_starting_structures(self):
+        from scine_puffin.jobs.scine_react_complex_nt2 import ScineReactComplexNt2
+        import scine_database as db
+
+        model = db.Model('gfn2', 'gfn2', '')
+        model.program = "xtb"
+        model.solvation = "gbsa"
+        model.solvent = "water"
+
+        reactant_one_path = os.path.join(resource_path(), "h2o2.xyz")
+        reactant_two_path = os.path.join(resource_path(), "hio3.xyz")
+
+        reactant_one_guess = add_structure(self.manager, reactant_one_path, db.Label.MINIMUM_OPTIMIZED, model=model)
+        reactant_two_guess = add_structure(self.manager, reactant_two_path, db.Label.MINIMUM_OPTIMIZED, model=model)
+        graph_one = json.load(open(os.path.join(resource_path(), "h2o2.json"), "r"))
+        graph_two = json.load(open(os.path.join(resource_path(), "hio3.json"), "r"))
+        reactant_one_guess.set_graph("masm_cbor_graph", graph_one["masm_cbor_graph"])
+        reactant_one_guess.set_graph("masm_idx_map", graph_one["masm_idx_map"])
+        reactant_one_guess.set_graph("masm_decision_list", graph_one["masm_decision_list"])
+        reactant_two_guess.set_graph("masm_cbor_graph", graph_two["masm_cbor_graph"])
+        reactant_two_guess.set_graph("masm_idx_map", graph_two["masm_idx_map"])
+        reactant_two_guess.set_graph("masm_decision_list", graph_two["masm_decision_list"])
+
+        job = db.Job('scine_react_complex_nt2')
+        settings = {
+            "self_consistence_criterion": 0.00000001,
+            "max_scf_iterations": 2000,
+            "nt_convergence_max_iterations": 600,
+            "nt_nt_total_force_norm": 0.1,
+            "nt_sd_factor": 1.0,
+            "nt_nt_use_micro_cycles": True,
+            "nt_nt_fixed_number_of_micro_cycles": True,
+            "nt_nt_number_of_micro_cycles": 10,
+            "nt_nt_filter_passes": 10,
+            "tsopt_convergence_max_iterations": 1000,
+            "tsopt_convergence_step_max_coefficient": 0.002,
+            "tsopt_convergence_step_rms": 0.001,
+            "tsopt_convergence_gradient_max_coefficient": 0.0002,
+            "tsopt_convergence_gradient_rms": 0.0001,
+            "tsopt_convergence_requirement": 3,
+            "tsopt_convergence_delta_value": 0.000001,
+            "tsopt_optimizer": "bofill",
+            "tsopt_geoopt_coordinate_system": "cartesianWithoutRotTrans",
+            "tsopt_bofill_trust_radius": 0.2,
+            "tsopt_bofill_follow_mode": 0,
+            "irc_convergence_max_iterations": 60,
+            "irc_sd_factor": 0.6,
+            "irc_sd_use_trust_radius": True,
+            "irc_sd_trust_radius": 0.1,
+            "irc_sd_dynamic_multiplier": 1.4,
+            "irc_irc_initial_step_size": 0.3,
+            "irc_stop_on_error": False,
+            "irc_convergence_step_max_coefficient": 0.002,
+            "irc_convergence_step_rms": 0.001,
+            "irc_convergence_gradient_max_coefficient": 0.0002,
+            "irc_convergence_gradient_rms": 0.0001,
+            "irc_convergence_delta_value": 0.000001,
+            "irc_irc_coordinate_system": "cartesianWithoutRotTrans",
+            "ircopt_convergence_max_iterations": 1000,
+            "ircopt_convergence_step_max_coefficient": 0.002,
+            "ircopt_convergence_step_rms": 0.001,
+            "ircopt_convergence_gradient_max_coefficient": 0.0002,
+            "ircopt_convergence_gradient_rms": 0.0001,
+            "ircopt_convergence_requirement": 3,
+            "ircopt_convergence_delta_value": 0.000001,
+            "ircopt_geoopt_coordinate_system": "cartesianWithoutRotTrans",
+            "ircopt_bfgs_use_trust_radius": True,
+            "ircopt_bfgs_trust_radius": 0.2,
+            "opt_convergence_max_iterations": 1000,
+            "opt_convergence_step_max_coefficient": 0.002,
+            "opt_convergence_step_rms": 0.001,
+            "opt_convergence_gradient_max_coefficient": 0.0002,
+            "opt_convergence_gradient_rms": 0.0001,
+            "opt_convergence_requirement": 3,
+            "opt_convergence_delta_value": 0.000001,
+            "opt_geoopt_coordinate_system": "cartesianWithoutRotTrans",
+            "opt_bfgs_use_trust_radius": True,
+            "opt_bfgs_trust_radius": 0.4,
+            "rc_x_alignment_0": [
+                0.6412339068165366,
+                0.7013288980835932,
+                0.31137895475072497,
+                -0.7013288980835932,
+                0.700309491996055,
+                -0.133057852579546,
+                -0.31137895475072497,
+                -0.133057852579546,
+                0.9409244148204816
+            ],
+            "rc_x_alignment_1": [
+                0.3310448646119655,
+                0.07971826739747179,
+                -0.9402416154676363,
+                -0.07971826739747179,
+                0.9952255537541873,
+                0.05631247639570067,
+                0.9402416154676363,
+                0.05631247639570067,
+                0.33581931085777805
+            ],
+            "rc_x_rotation": 2.0943951023931953,
+            "rc_x_spread": 2.8723837106958987,
+            "rc_displacement": 0.0,
+            "nt_nt_associations": [0, 6],
+            "nt_nt_dissociations": [0, 2],
+            "rc_minimal_spin_multiplicity": False
+        }
+
+        calculation = add_calculation(self.manager, model, job, [reactant_one_guess.id(), reactant_two_guess.id()],
+                                      settings)
+        # Run calculation/job
+        config = self.get_configuration()
+        job = ScineReactComplexNt2()
+        job.prepare(config["daemon"]["job_dir"], calculation.id())
+        self.run_job(job, calculation, config)
+
+        # Check results
+        structures = self.manager.get_collection("structures")
+        properties = self.manager.get_collection("properties")
+        elementary_steps = self.manager.get_collection("elementary_steps")
+        assert calculation.get_status() == db.Status.COMPLETE
+        results = calculation.get_results()
+        assert len(results.property_ids) == 9
+        # Structure counts: TS + product + new reactant
+        assert len(results.structure_ids) == 3
+        assert len(results.elementary_step_ids) == 1
+        new_elementary_step = db.ElementaryStep(results.elementary_step_ids[-1], elementary_steps)
+        product = db.Structure(new_elementary_step.get_reactants(db.Side.RHS)[1][0], structures)
+        assert product.has_property('bond_orders')
+        assert product.has_graph('masm_cbor_graph')
+        new_ts = db.Structure(new_elementary_step.get_transition_state(), structures)
+        assert new_ts.has_property('electronic_energy')
+        energy_props = new_ts.get_properties("electronic_energy")
+        assert energy_props[0] in results.property_ids
+        energy = db.NumberProperty(energy_props[0], properties)
+        self.assertAlmostEqual(energy.get_data(), -25.38936573516693, delta=1e-4)

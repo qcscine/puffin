@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
-Copyright ETH Zurich, Laboratory of Physical Chemistry, Reiher Group.
+Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
@@ -53,7 +53,7 @@ class Configuration:
     configuration are:
 
     **daemon**
-      The settings peratining the execution of Puffin and its daemon process.
+      The settings pertaining the execution of Puffin and its daemon process.
 
     **database**
       All information about the database the Puffin will be working on.
@@ -233,11 +233,29 @@ class Configuration:
             "enforce_memory_limit": True,
         }
         self._data["programs"] = {
+            "ams": {
+                "available": False,
+                "source": "https://github.com/qcscine/ams_wrapper.git",
+                "root": "",
+                "version": "0.0.0",
+                "march": "native",
+                "cxx_compiler_flags": "",
+                "cmake_flags": "",
+            },
             "readuct": {
                 "available": True,
                 "source": "https://github.com/qcscine/readuct.git",
                 "root": "",
-                "version": "5.0.0",
+                "version": "5.1.0",
+                "march": "native",
+                "cxx_compiler_flags": "",
+                "cmake_flags": "",
+            },
+            "core": {
+                "available": True,
+                "source": "https://github.com/qcscine/core.git",
+                "root": "",
+                "version": "6.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -246,7 +264,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/utilities.git",
                 "root": "",
-                "version": "8.0.0",
+                "version": "9.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -255,7 +273,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/database.git",
                 "root": "",
-                "version": "1.2.0",
+                "version": "1.3.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -264,7 +282,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/sparrow.git",
                 "root": "",
-                "version": "4.0.0",
+                "version": "5.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -273,7 +291,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/molassembler.git",
                 "root": "",
-                "version": "2.0.0",
+                "version": "2.0.1",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -282,7 +300,7 @@ class Configuration:
                 'available': False,
                 'source': 'https://github.com/qcscine/swoose.git',
                 'root': '',
-                'version': 'master',
+                'version': '2.0.0',
                 'march': 'native',
                 "cmake_flags": "",
                 "cxx_compiler_flags": "",
@@ -309,7 +327,7 @@ class Configuration:
                 "available": False,
                 "source": "https://github.com/qcscine/serenity_wrapper.git",
                 "root": "",
-                "version": "2.0.0",
+                "version": "3.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -324,19 +342,37 @@ class Configuration:
                 "available": False,
                 "source": "https://github.com/qcscine/xtb_wrapper.git",
                 "root": "",
-                "version": "2.0.0",
+                "version": "3.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
             },
             "kinetx": {
-                "available": False,
+                "available": True,
                 "source": "https://github.com/qcscine/kinetx.git",
                 "root": "",
                 "version": "2.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
+            },
+            "rms": {
+                "available": False,
+                "source": "",
+                "root": "",
+                "version": "main"
+            },
+            "mrcc": {
+                'available': False,
+                'source': '',
+                'root': '',
+                'version': 'march2022',
+            },
+            "parrot": {
+                "available": False,
+                "source": "https://github.com/qcscine/parrot.git",
+                "root": "",
+                "version": "0.0.0"
             },
         }
 
