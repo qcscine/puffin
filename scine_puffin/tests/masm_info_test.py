@@ -19,7 +19,7 @@ except ImportError:
     pass
 else:
     class MasmHelperTests(unittest.TestCase):
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             super(MasmHelperTests, self).__init__(*args, **kwargs)
             self.settings = {
                 "sub_based_on_distance_connectivity": True,
@@ -31,7 +31,7 @@ else:
             graph_dict: dict = {}
             model: db.Model = db.Model("", "", "")
 
-            def __init__(self, atoms: utils.AtomCollection):
+            def __init__(self, atoms: utils.AtomCollection) -> None:
                 self.atoms = atoms
 
             def get_atoms(self) -> utils.AtomCollection:

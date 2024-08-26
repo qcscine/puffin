@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+from typing import TYPE_CHECKING, List
 import os
 import subprocess
 from scine_puffin.config import Configuration
 from .templates.job import Job, calculation_context, job_configuration_wrapper
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class GaussianChargeModel5(Job):
@@ -35,7 +43,7 @@ class GaussianChargeModel5(Job):
         The ``cm5_charges`` calculated for the given structure.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.input_file = "gaussian_calc.inp"
         self.output_file = "gaussian_calc.out"
@@ -92,9 +100,7 @@ class GaussianChargeModel5(Job):
         )
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
-
-        import scine_database as db
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
         # Gather all required collections
         structures = manager.get_collection("structures")
@@ -172,5 +178,5 @@ class GaussianChargeModel5(Job):
         return True
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "utils", "gaussian"]

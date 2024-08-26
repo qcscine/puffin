@@ -1,20 +1,26 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
-import numpy as np
-import scine_database as db
-from typing import Optional, List
 from multiprocessing import Pool
+from typing import Optional, List, TYPE_CHECKING, Any, Dict
+
+import numpy as np
 
 from .templates.job import breakable, calculation_context, job_configuration_wrapper
 from .templates.kinetic_modeling_jobs import KineticModelingJob
 from scine_puffin.config import Configuration
-
 from ..utilities.rms_kinetic_model import RMSKineticModel
 from ..utilities.kinetic_modeling_sensitivity_analysis import RMSKineticModelingSensitivityAnalysis
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class RmsKineticModeling(KineticModelingJob):
@@ -22,30 +28,32 @@ class RmsKineticModeling(KineticModelingJob):
     Micro-kinetic modeling with the puffin-interface to the reaction mechanism simulator (RMS).
     Note: Running jobs with RMS as a backend requires an installation of RMS (including its Python bindings). This
     is not supported through the Puffin bootstrapping. See programs/rms.py for more information.
+
     **Order Name**
-        ``rms_kinetic_modeling``
+      ``rms_kinetic_modeling``
+
     **Required Input**
-      model :: db.Model
-         The electronic structure model to flag the new properties with.
+      model : db.Model
+        The electronic structure model to flag the new properties with.
 
     **Required Settings**
-      aggregate_ids :: List[str]
+      aggregate_ids : List[str]
         The aggregate IDs (as strings).
-      reaction_ids :: List[str]
+      reaction_ids : List[str]
         The reaction IDs (as strings).
-      aggregate_types :: List[int]
+      aggregate_types : List[int]
         The aggregate types. 0 for compounds, 1 for flasks.
-      ea :: List[float]
+      ea : List[float]
         The activation energies for each reaction as the free energy difference to the reaction LHS (in J/mol).
-      enthalpies :: List[float]
+      enthalpies : List[float]
         The enthalpy of each aggregate (in J/mol).
-      entropies :: List[float]
+      entropies : List[float]
         The entropy of each aggregate (in J/mol).
-      arrhenius_prefactors :: List[float]
+      arrhenius_prefactors : List[float]
         The exponential prefactors.
-      arrhenius_temperature_exponents :: List[float]
+      arrhenius_temperature_exponents : List[float]
         The temperature exponents in the Arrhenius equation.
-      start_concentrations :: List[float
+      start_concentrations : List[float
         The start concentrations of each aggregate.
 
     **Optional Settings**
@@ -53,44 +61,43 @@ class RmsKineticModeling(KineticModelingJob):
       any ``Calculation`` stored in a SCINE Database.
 
       The following options are available:
-      solver :: str
+
+      solver : str
         ODE solver. Currently only "CVODE_BDF" is supported.
-      phase_type :: str
+      phase_type : str
         The reactor phase. Options are ideal_gas (assumes P=const, T=const), ideal_dilute_solution
         (assumes V=const, T=const). Default is "ideal_gas".
-      max_time :: float
+      max_time : float
         Maximum integration time in seconds. Default 3600.0.
-      energy_model_program :: str
+      energy_model_program : str
         The program with which the electronic structure model should be flagged. Default any.
-      viscosity :: float
+      viscosity : float
         The solvent viscosity (in Pa s). Needs phase=ideal_dilute_solution and diffusion_limited=true. If "none", the
         viscosity is taken from tabulated values.
-      reactor_solvent :: str
+      reactor_solvent : str
         The reactor solvent. If "none", the solvent in the electronic structure model is used if any.
-      site_density :: float
-         The density of surface sites. Default is "none". Requires phase=ideal_surface. Not fully supported yet.
-      diffusion_limited :: bool
-         If true, diffusion limits are enforced. Requires phase=ideal_dilute_solution. May lead to numerical
-         instability of the ODE solver. Default False.
-      reactor_temperature :: float
-         The reactor temperature (in K). If "none", the temperature in the model is used. Default "none".
-      reactor_pressure :: float
-         The reactor pressure (in Pa). If none, the pressure in the model is used. Default "none".
-      absolute_tolerance :: float
-         The absolute tolerance of the ODE solver. High values lead to a faster but less reliable integration. Default
-         1e-20.
-      relative_tolerance :: float
-         The relative tolerance of the ODE solver. High values lead to a faster but less reliable integration.
-         Default 1e-6.
-      solvent_aggregate_str_id :: str
-         The aggregate ID of the solvent as a string. If "none", the solvent is assumed to be unreactive.
-      solvent_concentration :: float
-         The solvent concentraion. Defualt is 55.3 (mol/L).
-
-      enforce_mass_balance :: bool
-         If true, the an error is raised for any non-balanced reaction.
-
-      screen_sensitivities :: bool
+      site_density : float
+        The density of surface sites. Default is "none". Requires phase=ideal_surface. Not fully supported yet.
+      diffusion_limited : bool
+        If true, diffusion limits are enforced. Requires phase=ideal_dilute_solution. May lead to numerical
+        instability of the ODE solver. Default False.
+      reactor_temperature : float
+        The reactor temperature (in K). If "none", the temperature in the model is used. Default "none".
+      reactor_pressure : float
+        The reactor pressure (in Pa). If none, the pressure in the model is used. Default "none".
+      absolute_tolerance : float
+        The absolute tolerance of the ODE solver. High values lead to a faster but less reliable integration. Default
+        1e-20.
+      relative_tolerance : float
+        The relative tolerance of the ODE solver. High values lead to a faster but less reliable integration.
+        Default 1e-6.
+      solvent_aggregate_str_id : str
+        The aggregate ID of the solvent as a string. If "none", the solvent is assumed to be unreactive.
+      solvent_concentration : float
+        The solvent concentration. Default is 55.3 (mol/L).
+      enforce_mass_balance : bool
+        If true, an error is raised for any non-balanced reaction.
+      screen_sensitivities : bool
         If true, only parameters associated to aggregates and reactions with significant concentration flux are
         considered in the sensitivity analysis (flux > oaat_vertex_flux_threshold | flux > oaat_vertex_flux_threshold).
 
@@ -107,10 +114,11 @@ class RmsKineticModeling(KineticModelingJob):
         its centroid. The edge flux for each reaction is added to the centroid of the first aggregate on the reaction's
         LHS. Note, that the properties are NOT listed in the results to avoid large DB documents.
     """
-    def __init__(self):
+
+    def __init__(self) -> None:
         super().__init__()
         self.name: str = "RMS kinetic modeling job"
-        self.settings = {
+        self.settings: Dict[str, Any] = {
             "solver": "Recommended",
             "phase_type": "ideal_gas",
             "max_time": 3600.0,
@@ -141,7 +149,6 @@ class RmsKineticModeling(KineticModelingJob):
         }
         self.model: db.Model = db.Model("PM6", "PM6", "")
         self._rms_file_name: str = "chem.rms"
-        self._rms_aggregate_indices = []
         self._solvent_a_index: Optional[int] = None
         self._viscosity: Optional[float] = None
         self._solvent: Optional[str] = None
@@ -176,7 +183,7 @@ class RmsKineticModeling(KineticModelingJob):
         return 1
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "rms"]
 
     @job_configuration_wrapper

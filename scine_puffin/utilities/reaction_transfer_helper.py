@@ -1,18 +1,23 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
-from typing import List, Set, Union, Optional
+from typing import List, Set, Union, Optional, TYPE_CHECKING
 import sys
 
 import numpy as np
-import scine_database as db
 
 from .transfer_helper import TransferHelper
 from .surface_helper import update_slab_dict
 from scine_puffin.jobs.templates.scine_react_job import ReactJob
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class ReactionTransferHelper(TransferHelper):
@@ -123,7 +128,7 @@ class ReactionTransferHelper(TransferHelper):
         """
         new_surface_indices = self._determine_new_indices(old_structures, new_structures)
         calculation = self.react_job.get_calculation()
-        thresh = self.react_job.settings[self.react_job.job_key]["n_surface_atom_threshold"]
+        thresh = self.react_job.connectivity_settings["n_surface_atom_threshold"]
         for new_indices, new_structure in zip(new_surface_indices, new_structures):
             # do not transfer single surface atom, since we assume that this means we don't have a surface anymore
             if len(new_indices) > thresh:
@@ -152,7 +157,7 @@ class ReactionTransferHelper(TransferHelper):
             # no slab dict in all old_structures
             return
         new_surface_indices = self._determine_new_indices(old_structures, new_structures)
-        thresh = self.react_job.settings[self.react_job.job_key]["n_surface_atom_threshold"]
+        thresh = self.react_job.connectivity_settings["n_surface_atom_threshold"]
         for new_indices, new_structure in zip(new_surface_indices, new_structures):
             if len(new_indices) > thresh:
                 self._sanity_checks(new_structure, self.slab_dict_name)

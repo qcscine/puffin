@@ -1,18 +1,29 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
+
 from copy import deepcopy
+from typing import TYPE_CHECKING, List
+
+import numpy as np
 
 from scine_puffin.config import Configuration
 from scine_puffin.utilities import scine_helper
 from .templates.job import calculation_context, job_configuration_wrapper
 from .templates.scine_job import ScineJob
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class ScineConceptualDft(ScineJob):
-    """
+    __doc__ = ("""
     A job calculating conceptual DFT properties for a given structure with a given
     model. The properties are extracted from the atomic charges and energies
     of the given structure, as well the structure with the same geometry but
@@ -27,35 +38,24 @@ class ScineConceptualDft(ScineJob):
       any ``Calculation`` stored in a SCINE Database.
       Possible settings for this job are:
 
-      spin_multiplicity_plus :: int
+      spin_multiplicity_plus : int
           The spin multiplicity of the system with one additional electron.
           If not specified, the additional electron is assumed to pair up with
           any priorly existing unpaired electrons.
           I.e. the multiplicity is assumed to decrease by one for all open-shell
           structures and to be two if the start structure is closed-shell.
-      spin_multiplicity_minus :: int
+      spin_multiplicity_minus : int
           The spin multiplicity of the system with one electron less.
           If not specified, the deducted electron is assumed to be an unpaired
           one with the others not rearranging. I.e. the multiplicity is assumed
           to decrease by one for all open-shell structures and to be two if the
           start structure is closed-shell.
 
-      All settings that are recognized by the program chosen.
-        Furthermore, all settings that are commonly understood by any program
-        interface via the SCINE Calculator interface.
-
-      Common examples are:
-
-      max_scf_iterations :: int
-         The number of allowed SCF cycles until convergence.
-
-    **Required Packages**
-      - SCINE: Database (present by default)
-      - SCINE: Readuct (present by default)
-      - SCINE: Utils (present by default)
-      - A program implementing the SCINE Calculator interface, e.g. Sparrow
-
-    **Generated Data**
+    """ + "\n"
+               + ScineJob.optional_settings_doc() + "\n"
+               + ScineJob.general_calculator_settings_docstring() + "\n"
+               + ScineJob.generated_data_docstring() + "\n" +
+               """
       If successful the following data will be generated and added to the
       database:
 
@@ -70,15 +70,16 @@ class ScineConceptualDft(ScineJob):
         The ``hardness`` associated with the given structure.
         The ``softness`` associated with the given structure.
     """
+               + ScineJob.required_packages_docstring()
+               )
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.name = "Scine Conceptual DFT Calculation Job"
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
-        import scine_database as db
         import scine_readuct as readuct
         import scine_utilities as utils
 
@@ -108,13 +109,13 @@ class ScineConceptualDft(ScineJob):
             charge_minus = charge + 1
 
             if "spin_multiplicity_plus" in calculation_settings:
-                multiplicity_plus = calculation_settings["spin_multiplicity_plus"]
+                multiplicity_plus: int = calculation_settings["spin_multiplicity_plus"]  # type: ignore
                 del calculation_settings["spin_multiplicity_plus"]
             else:
                 multiplicity_plus = 2 if multiplicity == 1 else multiplicity - 1
 
             if "spin_multiplicity_minus" in calculation_settings:
-                multiplicity_minus = calculation_settings["spin_multiplicity_minus"]
+                multiplicity_minus: int = calculation_settings["spin_multiplicity_minus"]  # type: ignore
                 del calculation_settings["spin_multiplicity_minus"]
             else:
                 multiplicity_minus = 2 if multiplicity == 1 else multiplicity - 1
@@ -127,7 +128,7 @@ class ScineConceptualDft(ScineJob):
             settings_manager.task_settings["require_charges"] = True
 
             if program_helper is not None:
-                program_helper.calculation_preprocessing(systems[keys[0]], calculation_settings)
+                program_helper.calculation_preprocessing(self.get_calc(keys[0], systems), calculation_settings)
 
             # N electron structure/structure of interest
             print("N ELECTRON CALCULATION")
@@ -136,12 +137,13 @@ class ScineConceptualDft(ScineJob):
             self.throw_if_not_successful(
                 success, systems, keys, [
                     "energy", "atomic_charges"], "Single point calculation on N electron system failed.")
-            energy = systems[keys[0]].get_results().energy
-            atomic_charges = systems[keys[0]].get_results().atomic_charges
+            energy = self.get_energy(self.get_calc(keys[0], systems))
+            atomic_charges = self.get_calc(keys[0], systems).get_results().atomic_charges
+            assert atomic_charges
 
             # N+1 electron "plus" system
             print("N+1 ELECTRON CALCULATION")
-            print("Charge: {:4d} Multiplicity: {:4d}".format(charge_plus, multiplicity_plus))
+            print(f"Charge: {charge_plus} Multiplicity: {multiplicity_plus}")
             plus_calculator_settings = deepcopy(settings_manager.calculator_settings)
             plus_calculator_settings[utils.settings_names.molecular_charge] = charge_plus
             plus_calculator_settings[utils.settings_names.spin_multiplicity] = multiplicity_plus
@@ -151,12 +153,13 @@ class ScineConceptualDft(ScineJob):
             self.throw_if_not_successful(
                 success, systems, ["plus"], [
                     "energy", "atomic_charges"], "Single point calculation on N+1 electron system failed.")
-            energy_plus = systems["plus"].get_results().energy
-            atomic_charges_plus = systems["plus"].get_results().atomic_charges
+            energy_plus = self.get_energy(self.get_calc("plus", systems))
+            atomic_charges_plus = self.get_calc("plus", systems).get_results().atomic_charges
+            assert atomic_charges_plus
 
             # N-1 electron "minus" system
             print("N-1 ELECTRON CALCULATION")
-            print("Charge: {:4d} Multiplicity: {:4d}".format(charge_minus, multiplicity_minus))
+            print(f"Charge: {charge_minus} Multiplicity: {multiplicity_plus}")
             minus_calculator_settings = deepcopy(settings_manager.calculator_settings)
             minus_calculator_settings[utils.settings_names.molecular_charge] = charge_minus
             minus_calculator_settings[utils.settings_names.spin_multiplicity] = multiplicity_minus
@@ -166,13 +169,17 @@ class ScineConceptualDft(ScineJob):
             self.throw_if_not_successful(
                 success, systems, ["minus"], [
                     "energy", "atomic_charges"], "Single point calculation on N-1 electron system failed.")
-            energy_minus = systems["minus"].get_results().energy
-            atomic_charges_minus = systems["minus"].get_results().atomic_charges
+            energy_minus = self.get_energy(self.get_calc("minus", systems))
+            atomic_charges_minus = self.get_calc("minus", systems).get_results().atomic_charges
+            assert atomic_charges_minus
 
             # Deduce conceptual DFT properties
             print("cDFT PROPERTIES")
             cDFT_container = utils.conceptual_dft.calculate(
-                energy, atomic_charges, energy_plus, atomic_charges_plus, energy_minus, atomic_charges_minus)
+                energy, np.asarray(atomic_charges),
+                energy_plus, np.asarray(atomic_charges_plus),
+                energy_minus, np.asarray(atomic_charges_minus)
+            )
 
             # Calculation postprocessing
             self.verify_connection()
@@ -181,7 +188,7 @@ class ScineConceptualDft(ScineJob):
             db_results.clear()
             self._calculation.set_results(db_results)
             # update model
-            scine_helper.update_model(systems[keys[0]], self._calculation, self.config)
+            scine_helper.update_model(self.get_calc(keys[0], systems), self._calculation, self.config)
 
             # Store cDFT properties
             # Localized
@@ -281,5 +288,5 @@ class ScineConceptualDft(ScineJob):
         return self.postprocess_calculation_context()
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "readuct", "utils"]

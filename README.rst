@@ -242,7 +242,14 @@ release as archived on `Zenodo <https://doi.org/10.5281/zenodo.6695461>`_ (DOI
 In addition, we kindly request you to cite the following article when using Puffin:
 J. P. Unsleber, S. A. Grimmel, M. Reiher,
 "Chemoton 2.0: Autonomous Exploration of Chemical Reaction Networks",
-arXiv:2202.13011 [physics.chem-ph].
+*J. Chem. Theory Comput.*, **2022**, *18*, 5393.
+
+Furthermore, when publishing results obtained with any SCINE module, please cite the following paper:
+
+T. Weymuth, J. P. Unsleber, P. L. Türtscher, M. Steiner, J.-G. Sobez, C. H. Müller, M. Mörchen,
+V. Klasovita, S. A. Grimmel, M. Eckhoff, K.-S. Csizi, F. Bosia, M. Bensberg, M. Reiher,
+"SCINE—Software for chemical interaction networks", *J. Chem. Phys.*, **2024**, *160*, 222501
+(DOI `10.1063/5.0206974 <https://doi.org/10.1063/5.0206974>`_).
 
 
 Support and Contact

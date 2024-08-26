@@ -1,21 +1,33 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """turbomole_helper.py: Collection of common procedures to be carried out with turbomole"""
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+import math
 import os
 import re
 import sys
 from subprocess import Popen, PIPE, run
-from typing import List, Tuple
+from typing import List, Tuple, TYPE_CHECKING
 
-from scine_puffin.jobs.templates.job import TurbomoleJob
+from scine_puffin.jobs.templates.turbomole_job import TurbomoleJob
+from scine_puffin.utilities.imports import module_exists, requires, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    utils = MissingDependency("scine_utilities")
 
 
 class TurbomoleHelper:
-    def __init__(self):
+    def __init__(self) -> None:
         self.define_input = "tm.input"
         self.input_structure = "system.xyz"
         self.coord_file = "coord"
@@ -30,19 +42,19 @@ class TurbomoleHelper:
 
         self.turbomole_job = TurbomoleJob()
 
-    def check_settings_availability(self, job, settings: dict):
-        import scine_utilities.settings_names as sn
+    @requires("utilities")
+    def check_settings_availability(self, job, settings: utils.ValueCollection) -> None:
 
         # All available settings that are implemented for Turbomole
         available_settings = [
             "cartesian_constraints",
-            sn.max_scf_iterations,
+            utils.settings_names.max_scf_iterations,
             "transform_coordinates",
-            sn.scf_damping,
-            sn.self_consistence_criterion,
+            utils.settings_names.scf_damping,
+            utils.settings_names.self_consistence_criterion,
             "scf_orbitalshift",
             "calculate_loewdin_charges",
-            sn.spin_mode,
+            utils.settings_names.spin_mode,
         ]
 
         available_settings_structure_optimization = [
@@ -59,8 +71,11 @@ class TurbomoleHelper:
             if key not in settings_to_check:
                 raise NotImplementedError("Error: The key '{}' was not recognized.".format(key))
 
-    # Executes any Turbomole pre- or postprocessing tool
-    def execute(self, args, input_file=None, error_test=True, stdout_tofile=True):
+    @staticmethod
+    def execute(args, input_file=None, error_test=True, stdout_tofile=True):
+        """
+        Executes any Turbomole pre- or postprocessing tool
+        """
 
         if isinstance(args, str):
             args = args.split()
@@ -71,6 +86,7 @@ class TurbomoleHelper:
             out = open(out_file, "w")
         else:
             out = PIPE
+            out_file = "test.out"
 
         if input_file:
             with open(input_file, "r") as f:
@@ -93,11 +109,11 @@ class TurbomoleHelper:
         if not stdout_tofile:
             return res[0].decode("utf-8", errors='replace')
 
-    # Converts xyz file to Turbomole coord file
-
-    def write_coord_file(self, settings: dict):
-
-        import scine_utilities as utils
+    @requires("utilities")
+    def write_coord_file(self, settings: utils.ValueCollection) -> None:
+        """
+        Converts xyz file to Turbomole coord file
+        """
 
         # Read in xyz file and transform coordinates from Angstrom to Bohr
         xyz, _ = utils.io.read(self.input_structure)
@@ -121,7 +137,7 @@ class TurbomoleHelper:
             for j, line in enumerate(coord_in_bohr):
                 if constraints_set:
                     constraint_atoms = settings["cartesian_constraints"]
-                    if (j + 1) in constraint_atoms:
+                    if (j + 1) in constraint_atoms:  # type: ignore
                         coord.write(line + " f" + "\n")
                     else:
                         coord.write(line + "\n")
@@ -129,10 +145,12 @@ class TurbomoleHelper:
                     coord.write(line + "\n")
             coord.write("$end\n")
 
-    # Generates input file for the preprocessing tool define
-    def prepare_define_session(self, structure, model, settings: dict, job):
-        import scine_utilities.settings_names as sn
-
+    @requires("utilities")
+    def prepare_define_session(self, structure: db.Structure, model: db.Model,
+                               settings: utils.ValueCollection, job: db.Job):
+        """
+        Generates input file for the preprocessing tool define
+        """
         with open(self.define_input, "w") as define_input:
             define_input.write("\n\na {}\n".format(self.coord_file))
 
@@ -143,12 +161,13 @@ class TurbomoleHelper:
                 transform_coordinates_set = True
 
             if "transform_coordinates" in settings:
-                transform_coordinates_set = settings["transform_coordinates"]
+                transform_coordinates_set = settings["transform_coordinates"]  # type: ignore
 
             spin_mode = "any"
             spin_mode_is_set = False
-            if sn.spin_mode in settings:
-                spin_mode = settings[sn.spin_mode]
+            if utils.settings_names.spin_mode in settings:
+                spin_mode = settings[utils.settings_names.spin_mode]  # type: ignore
+                assert isinstance(spin_mode, str)
                 spin_mode_is_set = True
 
             if spin_mode not in self.available_spin_modes:
@@ -196,15 +215,15 @@ class TurbomoleHelper:
                     raise NotImplementedError("Invalid dispersion correction!")
 
             # Max number of SCF iterations
-            if sn.max_scf_iterations in settings:
-                define_input.write("scf\niter\n{}\n".format(int(settings[sn.max_scf_iterations])))
+            if utils.settings_names.max_scf_iterations in settings:
+                define_input.write("scf\niter\n{}\n".format(
+                    int(settings[utils.settings_names.max_scf_iterations])))  # type: ignore
             define_input.write("\n*")
 
-    # Runs the Turbomole preprocessing tool define
-    def initialize(self, model, settings: dict):
-
-        import math
-        import scine_utilities.settings_names as sn
+    def initialize(self, model: db.Model, settings: utils.ValueCollection) -> None:
+        """
+        Runs the Turbomole preprocessing tool define
+        """
 
         self.execute(
             os.path.join(self.turbomole_job.turboexe, "define"),
@@ -219,8 +238,8 @@ class TurbomoleHelper:
 
         # Add damping for SCF if requested
         # TODO: SCF damping setting should allow for the choice of custom damping parameters
-        if sn.scf_damping in settings:
-            if settings[sn.scf_damping]:
+        if utils.settings_names.scf_damping in settings:
+            if settings[utils.settings_names.scf_damping]:
                 run(
                     r"sed -i '/$scfdamp*/c\$scfdamp   start=8.500  step=0.10  min=0.50' {}".format(self.control_file),
                     shell=True,
@@ -229,13 +248,14 @@ class TurbomoleHelper:
         if "scf_orbitalshift" in settings:
             run(
                 r"sed -i '/$scforbitalshift */c\$scforbitalshift  closedshell={}' {}".format(
-                    float(settings["scf_orbitalshift"]), self.control_file
+                    float(settings["scf_orbitalshift"]), self.control_file  # type: ignore
                 ),
                 shell=True,
             )
         # SCF convergence criterion
-        if sn.self_consistence_criterion in settings:
-            convergence_threshold = int(round(-math.log10(settings[sn.self_consistence_criterion])))
+        if utils.settings_names.self_consistence_criterion in settings:
+            convergence_threshold = int(round(
+                -math.log10(settings[utils.settings_names.self_consistence_criterion])))  # type: ignore
             run(
                 r"sed -i '/$scfconv*/c\$scfconv {}' {}".format(convergence_threshold, self.control_file),
                 shell=True,
@@ -261,8 +281,10 @@ class TurbomoleHelper:
                     + "Turbomole accepts all functionals in lower case letters only."
                 )
 
-    # Parse Loewdin charges
-    def get_loewdin_charges(self, natoms, calculation_settings) -> Tuple[bool, List[float]]:
+    def get_loewdin_charges(self, natoms: int, calculation_settings: utils.ValueCollection) -> Tuple[bool, List[float]]:
+        """
+        Parse Loewdin charges
+        """
 
         # Execute Turbomole postprocessing tool proper
         with open(self.proper_input_file, "a") as proper_file:
@@ -272,6 +294,7 @@ class TurbomoleHelper:
             input_file=self.proper_input_file,
         )
         loewdin_charges = []
+        charge_lines = []
         # Read atomic charges from proper output
         with open(self.proper_file, "r") as file:
             lines = file.readlines()
@@ -296,8 +319,10 @@ class TurbomoleHelper:
 
         return atomic_charges_set, loewdin_charges
 
-    # Parse energy file
     def parse_energy_file(self) -> float:
+        """
+        Parse energy file
+        """
         try:
             with open(self.energy_file, "r") as file:
                 lines = file.readlines()
@@ -312,12 +337,12 @@ class TurbomoleHelper:
         except FileNotFoundError as e:
             raise RuntimeError("Energy file is not accessible because the job failed.") from e
 
-    def evaluate_spin_mode(self, calculation_settings) -> str:
-        import scine_utilities.settings_names as sn
+    @requires("utilities")
+    def evaluate_spin_mode(self, calculation_settings: utils.ValueCollection) -> str:
 
         with open(self.control_file) as f:
             if "uhf" and "uhfmo" in f.read():
-                if calculation_settings.get(sn.spin_mode) == "restricted":
+                if calculation_settings.get(utils.settings_names.spin_mode) == "restricted":
                     sys.stderr.write(
                         "Requested restricted calculation was converted to an unrestricted calculation "
                         "with multiplicity != 1. Please enforce unrestricted singlet for this case."

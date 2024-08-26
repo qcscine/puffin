@@ -4,11 +4,16 @@ Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Gr
 See LICENSE.txt for details.
 """
 
-from typing import List, Dict, Optional, Tuple, Union, Any
+from typing import List, Dict, Optional, Tuple, Union, Any, TYPE_CHECKING
 import yaml
 import numpy as np
 
-import scine_utilities as utils
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    utils = MissingDependency("scine_utilities")
 
 
 def create_single_species_entry(name: str, h: float, s: float):
@@ -20,15 +25,15 @@ def create_single_species_entry(name: str, h: float, s: float):
 
     Parameters
     ----------
-    name :: str
+    name : str
         The species name (unique identifier).
-    h :: float
+    h : float
         The species enthalpy in J/mol.
-    s :: float
+    s : float
         The species entropy in J/mol/K.
 
-    Return
-    ------
+    Returns
+    -------
     The species entry.
     """
     species_type_str = "Species"
@@ -63,17 +68,17 @@ def create_rms_phase_entry(aggregate_str_ids: List[str], enthalpies: List[float]
 
     Parameters
     ----------
-    aggregate_str_ids :: List[str]
+    aggregate_str_ids : List[str]
         The aggregate IDs as strings.
-    enthalpies :: List[float]
+    enthalpies : List[float]
         The aggregate enthalpies (same ordering as for the aggregate_str_ids) in J/mol.
-    entropies :: List[float]
+    entropies : List[float]
         The aggregate entropies (note the ordering) in J/mol/K.
-    solvent_name :: Optional[str] (default None)
+    solvent_name : Optional[str] (default None)
         The name of an additional solvent species that is added to the species if provided.
 
-    Return
-    ------
+    Returns
+    -------
     The species a list of one dictionary.
     """
     species_list = []
@@ -85,28 +90,30 @@ def create_rms_phase_entry(aggregate_str_ids: List[str], enthalpies: List[float]
 
 
 def create_arrhenius_reaction_entry(reactant_names: List[str], product_names: List[str], e_a: float, n: float, a: float,
-                                    type_str: str = "ElementaryReaction") -> Dict:
+                                    type_str: str = "ElementaryReaction") -> Dict[str, Any]:
     """
     Create a reaction entry in the RMS format assuming that the rate constant is given by the Arrhenius equation:
     k = a / T^n exp(-e_a/(k_B T)).
 
     Parameters
     ----------
-    reactant_names :: List[str]
+    reactant_names : List[str]
         Species names of the reactions LHS (the names must correspond to an entry in the RMS phase dictionary).
-    product_names :: List[str]
+    product_names : List[str]
         Species names of the reactions RHS (the names must correspond to an entry in the RMS phase dictionary).
-    e_a :: float
+    e_a : float
         Activation energy in J/mol.
-    n :: float
+    n : float
         Temperature exponent.
-    a :: float
+    a : float
         Arrhenius prefactor.
-    type_str :: str (default 'ElementaryReaction')
+    type_str : str (default 'ElementaryReaction')
         Type of the reaction entry (see the RMS documentation for other options).
-    Return
-    ------
-    The reaction entry.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The reaction entry.
     """
     kinetics_type_str: str = "Arrhenius"
     return {
@@ -124,7 +131,7 @@ def create_arrhenius_reaction_entry(reactant_names: List[str], product_names: Li
 
 def create_rms_reaction_entry(prefactors: List[float], temperature_exponents: List[float],
                               activation_energies: Union[List[float], np.ndarray],
-                              reactant_list: List[Tuple[List[str], List[str]]]) -> List[Dict]:
+                              reactant_list: List[Tuple[List[str], List[str]]]) -> List[Dict[str, Any]]:
     """
     Create the reaction entries for the RMS input dictionary assuming Arrhenius kinetics and that all reactions are
     Elementary Reactions (according to the RMS definition):
@@ -134,17 +141,19 @@ def create_rms_reaction_entry(prefactors: List[float], temperature_exponents: Li
 
     Parameters
     ----------
-    prefactors :: List[float]
+    prefactors : List[float]
         Arrhenius prefactors (a in the equation above).
-    temperature_exponents :: List[float]
+    temperature_exponents : List[float]
         Temperature exonents (n in the equation above).
-    activation_energies :: Union[List[float], np.ndarray]
+    activation_energies : Union[List[float], np.ndarray]
         Activation energies (e_a in the equation above).
-    reactant_list :: List[Tuple[List[str], List[str]]]
+    reactant_list : List[Tuple[List[str], List[str]]]
         LHS (tuple[0]) and RHS (tuple[1]) of all reactions.
-    Return
-    ------
-    All reaction entries as a list of dictionaries.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        All reaction entries as a list of dictionaries.
     """
     reaction_type_str = "ElementaryReaction"
     reaction_list = []
@@ -161,12 +170,13 @@ def create_rms_units_entry(units: Optional[Dict] = None) -> Dict:
 
     Parameters
     ----------
-    units :: Optional[Dict] (default None)
+    units : Optional[Dict] (default None)
         The units as a dictionary.
 
-    Return
-    ------
-    If no units were provided, an empty dictionary is returned.
+    Returns
+    -------
+    Dict
+        If no units were provided, an empty dictionary is returned.
     """
     if units is None:
         units = {}
@@ -179,16 +189,17 @@ def create_solvent_entry(solvent: str, solvent_viscosity: Optional[float], solve
 
     Parameters
     ----------
-    solvent :: str
+    solvent : str
         The solvent name (e.g., water) to extract tabulated viscosity values.
-    solvent_viscosity :: Optional[float]
+    solvent_viscosity : Optional[float]
         The solvent's viscosity in Pa s.
-    solvent_id_str :: Optional[str]
+    solvent_id_str : Optional[str]
         The string id of the solvent compound. Only required if the solvent is a reacting species.
 
-    Return
-    ------
-    The solvent entry as a dictionary.
+    Returns
+    -------
+    Dict
+        The solvent entry as a dictionary.
     """
     if solvent_viscosity is None:
         solvent_viscosity = get_default_viscosity(solvent)
@@ -208,33 +219,33 @@ def create_rms_yml_file(aggregate_str_ids: List[str],
                         activation_energies: Union[List[float], np.ndarray],
                         reactants: List[Tuple[List[str], List[str]]],
                         file_name: str, solvent_name: Optional[str] = None, solvent_viscosity: Optional[float] = None,
-                        solvent_aggregate_index: Optional[int] = None):
+                        solvent_aggregate_index: Optional[int] = None) -> None:
     """
     Write the yml file input for RMS.
 
     Parameters
     ----------
-    aggregate_str_ids :: List[str]
+    aggregate_str_ids : List[str]
         The list of aggregate string ids to be added as RMS species.
-    enthalpies :: List[float]
+    enthalpies : List[float]
         The list of enthalpies for the aggregates (in J/mol).
-    entropies :: List[float]
+    entropies : List[float]
         The list of the aggregates entropies (in J/mol/K).
-    prefactors :: List[float]
+    prefactors : List[float]
         The list of the Arrhenius prefactors.
-    temperature_exponents :: List[float]
+    temperature_exponents : List[float]
         The list of the temperature exponents.
-    activation_energies :: Union[List[float], np.ndarray]
+    activation_energies : Union[List[float], np.ndarray]
         The activation energies in J/mol.
-    reactants :: List[Tuple[List[str], List[str]]]
+    reactants : List[Tuple[List[str], List[str]]]
         LHS (tuple[0]) and RHS (tuple[1]) of all reactions.
-    file_name :: str
+    file_name : str
         The filename for the yml file.
-    solvent_name :: Optional[str] (default None)
+    solvent_name : Optional[str] (default None)
         The solvent name.
-    solvent_viscosity :: Optional[float] (default None)
+    solvent_viscosity : Optional[float] (default None)
         The solvent's viscosity in Pa s.
-    solvent_aggregate_index :: Optional[int] (default None)
+    solvent_aggregate_index : Optional[int] (default None)
         The index of the solvent in the aggregte id list. This is only required if the solvent is a reacting species.
     """
     solvent_aggregate_id_str = None
@@ -263,13 +274,13 @@ def resolve_rms_solver(solver_name: str, reactor: Any):
 
     Parameters
     ----------
-    solver_name :: str
+    solver_name : str
         The solver name.
-    reactor :: rms.Reactor
+    reactor : rms.Reactor
         The julia RMS reactor object.
 
-    Return
-    ------
+    Returns
+    -------
     Returns the selected ODE solver as a julia Differential Equation object.
     """
     # pylint: disable=import-error
@@ -294,22 +305,23 @@ def resolve_rms_phase(phase_name: str, rms_species: Any, rms_reactions: Any, rms
 
     Parameters
     ----------
-    phase_name :: str
+    phase_name : str
         The name of the phase. Options are 'ideal_gas' and 'ideal_dilute_solution'.
-    rms_species :: RMS species object
+    rms_species : RMS species object
         The RMS species.
-    rms_reactions :: RMS Reaction list
+    rms_reactions : RMS Reaction list
         The RMS reactions.
-    rms_solvent :: RMS solvent object
+    rms_solvent : RMS solvent object
         The RMS solvetn object.
-    diffusion_limited :: bool
+    diffusion_limited : bool
         If true, diffusion limitations are enforced.
-    site_density :: Optional[float]
+    site_density : Optional[float]
         The site density for surface reactions.
 
-    Return
-    ------
-    Returns the RMS phase object.
+    Returns
+    -------
+    Any
+        Returns the RMS phase object.
     """
     # pylint: disable=import-error
     from julia import ReactionMechanismSimulator as rms
@@ -333,18 +345,19 @@ def get_ideal_dilute_solution(rms_species: Any, rms_reactions: Any, rms_solvent:
 
     Parameters
     ----------
-    rms_species :: RMS species object
+    rms_species : RMS species object
         The RMS species.
-    rms_reactions :: RMS Reaction list
+    rms_reactions : RMS Reaction list
         The RMS reactions.
-    rms_solvent :: RMS solvent object
+    rms_solvent : RMS solvent object
         The RMS solvetn object.
-    diffusion_limited :: bool
+    diffusion_limited : bool
         If true, diffusion limitations are enforced.
 
-    Return
-    ------
-    The rms.IdealDiluteSolution object.
+    Returns
+    -------
+    Any
+        The rms.IdealDiluteSolution object.
     """
     # pylint: disable=import-error
     from julia import ReactionMechanismSimulator as rms
@@ -360,17 +373,17 @@ def get_ideal_surface(rms_species, rms_reactions, diffusion_limited: bool, site_
 
     Parameters
     ----------
-    rms_species :: RMS species object
+    rms_species : RMS species object
         The RMS species.
-    rms_reactions :: RMS Reaction list object
+    rms_reactions : RMS Reaction list object
         The RMS reactions.
-    diffusion_limited :: bool
+    diffusion_limited : bool
         If true, diffusion limitations are enforced.
-    site_density :: float
+    site_density : float
         The site density for surface reactions.
 
-    Return
-    ------
+    Returns
+    -------
     The rms.IdealSurface object.
     """
     # pylint: disable=import-error
@@ -384,21 +397,22 @@ def get_ideal_surface(rms_species, rms_reactions, diffusion_limited: bool, site_
                             diffusionlimited=diffusion_limited)
 
 
-def get_default_viscosity(solvent_name: str):
+def get_default_viscosity(solvent_name: str) -> float:
     """
     Getter for tabulated solvent viscosity (in Pa s). Tabulated values are at 25 celsius.
 
     Source: https://hbcp.chemnetbase.com/faces/contents/InteractiveTable.xhtml
     Accessed on 23.01.2023, 14:00
 
-    Parameter
-    ---------
-    solvent_name :: str
+    Parameters
+    ----------
+    solvent_name : str
         The solvent's name.
 
-    Return
-    ------
-    The solvent's viscosity (in Pa s).
+    Returns
+    -------
+    float
+        The solvent's viscosity (in Pa s).
     """
     viscosities = {
         "water": 0.890,
@@ -411,14 +425,14 @@ def get_default_viscosity(solvent_name: str):
         "hexane": 0.240,
         "toluene": 0.560,
         "chloroform": 0.537,
-        "nitrobenzene":  1.863,
-        "aceticacid":  1.056,
+        "nitrobenzene": 1.863,
+        "aceticacid": 1.056,
         "acetonitrile": 0.369,
         "aniline": 3.85,
         "benzylalcohol": 5.47,
         "bromoform": 1.857,
-        "butanol":  2.54,
-        "tertbutanol":  4.31,
+        "butanol": 2.54,
+        "tertbutanol": 4.31,
         "carbontetrachloride": 0.908,
         "cyclohexane": 0.894,
         "cyclohexanone": 2.02,

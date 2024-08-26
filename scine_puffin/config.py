@@ -20,14 +20,14 @@ def dict_generator(indict: Dict[str, Any], pre: Optional[List[str]] = None):
 
     Parameters
     ----------
-    indict :: dict
+    indict : dict
         The dictionary to traverse.
-    pre :: dict
+    pre : dict
         The parent dictionary (used for recursion).
 
     Yields
     ------
-    key_chain :: List[str]
+    key_chain : List[str]
         A list of keys from top level to bottom level for each end in the tree
         of possible value fields in the given dictionary.
     """
@@ -79,85 +79,85 @@ class Configuration:
     In detail, the options in the configuration are:
 
     **daemon**
-      mode :: str
+      mode : str
         The mode to run the Puffin in, options are ``release`` and ``debug``.
         The ``release`` mode will fork the main process and run in a daemonized
         mode while the ``debug`` mode will run in the current shell, reporting
         any output and errors to ``stdout`` and ``stderr``.
-      job_dir :: str
+      job_dir : str
         The path to the directory containing the currently running job.
-      software_dir :: str
+      software_dir : str
         The path to the directory containing the software bootstrapped from
         sources. The Puffin will generate and fill this directory upon bootstrapping.
-      error_dir :: str
+      error_dir : str
         If existent, the Puffin instance will archive all failed jobs into this
         directory.
-      archive_dir :: str
+      archive_dir : str
         If existent, the Puffin instance will archive all correctly completed
         jobs into this directory.
-      uuid :: str
+      uuid : str
         A unique name for the Puffin instance. This can be set by the user, if
         not, a unique ID will automatically be generated.
-      pid :: str
+      pid : str
         The path to the file identifying the PID of the Puffin instance.
         Automatically populated on start-up if left empty.
-      pid_dir :: str
+      pid_dir : str
         The path to a folder holding the file identifying the PID of the Puffin instance.
-      log :: str
+      log : str
         The path to the logfile of the Puffin instance.
-      stop :: str
+      stop : str
         The path to a file that if existent will prompt the Puffin instance to
         stop taking new jobs and shut down instead. The instance will finish any
         running job though.
-      remove_stop_file :: bool
+      remove_stop_file : bool
         Upon finding a stop file the daemon will stop, if this option is set to
         ``True`` the found file will be deleted allowing instant restarts.
         In cases where multiple puffins depend on the same stop file it may be
         required to keep the stop file, setting this option to ``False``
-      cycle_time_in_s :: float
+      cycle_time_in_s : float
         The time in between scans of the database for new jobs that can be run.
-      timeout_in_h :: float
+      timeout_in_h : float
         The number of hours the Puffin instance should stay alive. Once this
         limit is reached, the Puffin is shut down and its running job will be
         killed and re-flagged as `new`.
-      idle_timeout_in_h :: float
+      idle_timeout_in_h : float
         The number of hours the Puffin instance should stay alive. After
         receiving the last job, once the limit is reached, the Puffin is shut
         down. Any accepted job will reset the timer. A negative value disables
         this feature and make the Puffin run until the ``timeout_in_h`` is
         reached independent of it being idle the entire time.
-      touch_time_in_s :: float
+      touch_time_in_s : float
         The time in seconds in between the attempts of the puffin to touch a
         calculation it is running in the database.
         In practice each Puffin will search for jobs in the database that are
         set as running but are not touched and reset them, as they indicate that
         the executing puffin has crashed. See ``job_reset_time_in_s`` for more
         information.
-      job_reset_time_in_s :: float
+      job_reset_time_in_s : float
         The time in seconds that may have passed since the last touch on pending
         jobs before they are considered dead and are reset to be worked by
         another puffin.
         Note: The time in this setting has to be larger than the
         ``touch_time_in_s`` of all Puffins working on the same database to work!
-      repeated_failure_stop :: int
+      repeated_failure_stop : int
         The number of consecutive failed jobs that are allowed before the Puffin
         stops in order to avoid failing all jobs in a DB due to e.g. hardware
         issues. Failed jobs will be reset to new and rerun by other Puffins.
         Should always be greater than 1.
-      max_number_of_jobs :: int
+      max_number_of_jobs : int
         The maximum number of jobs a single Puffin will carry out (complete
         or failed), before gracefully exiting. Any negative number or zero disables this
         setting; by default it is disabled.
-      enforce_memory_limit :: bool
+      enforce_memory_limit : bool
         If the given memory limit should be enforced (i.e., a job is killed as soon as it reaches it)
         or not. The puffin still continues to work on other calculations either way.
 
     **database**
-      ip :: str
+      ip : str
         The IP at which the database server to connect with is found.
-      port :: int
+      port : int
         The port at which the database server to connect with is found.
-      name :: str
+      name : str
         The name of the database on the database server to connect with.
         Multiple databases (with multiple names) can be given as comma seperated
         list: ``name_one,name_two,name_three``. The databases will be used in
@@ -166,19 +166,19 @@ class Configuration:
         second one will be considered by the Puffin instance.
 
     **resources**
-      cores :: int
+      cores : int
         The number of threads the executed jobs are allowed to use. Note that
         only jobs that are below this value in their requirements will be
         accepted by the Puffin instance.
-      memory :: float
+      memory : float
         The total amount of memory the Puffin and its jobs are allowed to use.
         Given in GB. Note that only jobs that are below this value in their
         requirements will be accepted by the Puffin instance.
-      disk :: float
+      disk : float
         The total amount of disk space the Puffin and its jobs are allowed to
         use. Given in GB. Note that only jobs that are below this value in their
         requirements will be accepted by the Puffin instance.
-      ssh_keys :: List[str]
+      ssh_keys : List[str]
         Any SSH keys needed by the Puffin in order to connect to the database
         or to bootstrap programs.
 
@@ -186,24 +186,24 @@ class Configuration:
       The specific details for each program are given in their respective
       documentation. However, common options are:
 
-      available :: bool
+      available : bool
         The switch whether the program shall be available to Puffin.
         Any programs set to be unavailable will not be bootstrapped.
-      source :: str
+      source : str
         The link to the source location of the given program, usually a https
         link to a git repository
-      root :: str
+      root : str
         The folder at which the program is already installed at.
         This will request a non source based bootstrapping of the program.
-      version :: str
+      version : str
         The version of the program to use. Can also be a git tag or commit SHA.
 
     The default version of a configuration file can be generated using
     ``python3 -m puffin configure`` (if no environment variables are set).
     """
 
-    def __init__(self):
-        self._data = {}
+    def __init__(self) -> None:
+        self._data: Dict[str, Dict[str, Any]] = {}
         self._data["database"] = {"ip": "127.0.0.1", "port": 27017, "name": "default"}
         self._data["resources"] = {
             "cores": 1,
@@ -237,7 +237,7 @@ class Configuration:
                 "available": False,
                 "source": "https://github.com/qcscine/ams_wrapper.git",
                 "root": "",
-                "version": "0.0.0",
+                "version": "develop",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -246,7 +246,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/readuct.git",
                 "root": "",
-                "version": "5.1.0",
+                "version": "6.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -255,7 +255,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/core.git",
                 "root": "",
-                "version": "6.0.0",
+                "version": "6.0.1",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -264,7 +264,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/utilities.git",
                 "root": "",
-                "version": "9.0.0",
+                "version": "10.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -273,7 +273,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/database.git",
                 "root": "",
-                "version": "1.3.0",
+                "version": "1.4.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -282,7 +282,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/sparrow.git",
                 "root": "",
-                "version": "5.0.0",
+                "version": "5.1.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -291,7 +291,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/molassembler.git",
                 "root": "",
-                "version": "2.0.1",
+                "version": "3.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -300,7 +300,7 @@ class Configuration:
                 'available': False,
                 'source': 'https://github.com/qcscine/swoose.git',
                 'root': '',
-                'version': '2.0.0',
+                'version': '2.1.0',
                 'march': 'native',
                 "cmake_flags": "",
                 "cxx_compiler_flags": "",
@@ -327,7 +327,7 @@ class Configuration:
                 "available": False,
                 "source": "https://github.com/qcscine/serenity_wrapper.git",
                 "root": "",
-                "version": "3.0.0",
+                "version": "3.1.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -342,7 +342,7 @@ class Configuration:
                 "available": False,
                 "source": "https://github.com/qcscine/xtb_wrapper.git",
                 "root": "",
-                "version": "3.0.0",
+                "version": "3.0.1",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -351,7 +351,7 @@ class Configuration:
                 "available": True,
                 "source": "https://github.com/qcscine/kinetx.git",
                 "root": "",
-                "version": "2.0.0",
+                "version": "3.0.0",
                 "march": "native",
                 "cxx_compiler_flags": "",
                 "cmake_flags": "",
@@ -372,7 +372,7 @@ class Configuration:
                 "available": False,
                 "source": "https://github.com/qcscine/parrot.git",
                 "root": "",
-                "version": "0.0.0"
+                "version": "develop"
             },
         }
 
@@ -382,12 +382,12 @@ class Configuration:
 
         Parameters
         ----------
-        key :: str
+        key : str
             One of: ``daemon``, ``database``, ``resources``, ``programs``.
 
         Returns
         -------
-        settings :: dict
+        settings : dict
             A sub-dict of the total configuration.
         """
         return self._data[key]
@@ -398,7 +398,7 @@ class Configuration:
 
         Returns
         -------
-        settings :: dict
+        settings : dict
             A sub-dict of the total configuration.
         """
         return self._data["database"]
@@ -409,7 +409,7 @@ class Configuration:
 
         Returns
         -------
-        settings :: dict
+        settings : dict
             A sub-dict of the total configuration.
         """
         return self._data["resources"]
@@ -420,7 +420,7 @@ class Configuration:
 
         Returns
         -------
-        settings :: dict
+        settings : dict
             A sub-dict of the total configuration.
         """
         return self._data["daemon"]
@@ -431,18 +431,18 @@ class Configuration:
 
         Returns
         -------
-        settings :: dict
+        settings : dict
             A sub-dict of the total configuration.
         """
         return self._data["programs"]
 
-    def dump(self, path: str):
+    def dump(self, path: str) -> None:
         """
         Dumps the current configuration into a .yaml file.
 
         Parameters
         ----------
-        path :: str
+        path : str
             The file to dump the configuration into.
         """
         # Parse environment
@@ -454,11 +454,11 @@ class Configuration:
         with open(path, "w") as outfile:
             yaml.dump(self._data, outfile, default_flow_style=False)
 
-    def load(self, path: Optional[str] = None):
+    def load(self, path: Optional[str] = None) -> None:
         """
         Loads the configuration. The configuration is initialized using the
         default values, then all settings given in the file (if there is one)
-        are applied. Finally all settings given as environment variables are
+        are applied. Finally, all settings given as environment variables are
         applied.
 
         Each setting in the config can be set via a corresponding environment
@@ -474,7 +474,7 @@ class Configuration:
 
         Parameters
         ----------
-        path :: str
+        path : str
             The file to read the configuration from. Default: ``None``
         """
         # Parse file
@@ -506,7 +506,7 @@ class Configuration:
                     if isinstance(current_value, bool):
                         value = env[key].lower() in ["true", "1"]
                     else:
-                        value = type(current_value)(env[key])
+                        value = type(current_value)(env[key])  # type: ignore
                 except BaseException as e:
                     raise KeyError(
                         "The environment variable '{}' can not be translated "
@@ -527,16 +527,16 @@ class Configuration:
                 f'{self._data["daemon"]["uuid"]}.pid'
             )
 
-    def _apply_changes(self, to_dict: dict, from_dict: dict):
+    def _apply_changes(self, to_dict: dict, from_dict: dict) -> None:
         """
         A small helper applying changes from one dictionary to another, checking
         the types and making sure only existing keys are mapped.
 
         Parameters
         ----------
-        to_dict :: dict
+        to_dict : dict
             The dictionary to apply the changes to.
-        from_dict :: dict
+        from_dict : dict
             The dictionary to read the changes from.
 
         Raises

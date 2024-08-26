@@ -1,13 +1,22 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+from typing import TYPE_CHECKING, List
 import os
 from scine_puffin.config import Configuration
-from .templates.job import calculation_context, TurbomoleJob, job_configuration_wrapper
+from .templates.job import calculation_context, job_configuration_wrapper
+from .templates.turbomole_job import TurbomoleJob
 from ..utilities.turbomole_helper import TurbomoleHelper
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class TurbomoleSinglePoint(TurbomoleJob):
@@ -24,30 +33,30 @@ class TurbomoleSinglePoint(TurbomoleJob):
       any ``Calculation`` stored in a SCINE Database.
       Possible settings for this job are:
 
-      self_consistence_criterion :: float
+      self_consistence_criterion : float
           The self consistence criterion corresponding to the maximum
           energy change between two SCF cycles resulting in convergence.
           Default value ist 1E-6.
-      cartesian_constraints :: List[int]
+      cartesian_constraints : List[int]
           A list of atom indices of the atoms which positions will be
           constrained during the optimization.
-      max_scf_iterations :: int
+      max_scf_iterations : int
           The number of allowed SCF cycles until convergence. Default value is 30.
-      transform_coordinates :: bool
+      transform_coordinates : bool
            Switch to transform the input coordinates from redundant internal
            to cartesian coordinates. Setting this value to True and hence performing
            the calculation in Cartesian coordinates is helpful in rare occasions
            where the calculation with redundant internal coordinates fails.
            The optimization will take more time but is more likely to end
            successfully. The default is True.
-      scf_damping :: bool
+      scf_damping : bool
           Increases damping during the SCF by modifying the $scfdamp parameter in the control file.
           The default is False.
-      scf_orbitalshift :: float
+      scf_orbitalshift : float
           Shifts virtual orbital energies upwards. Default value is 0.1.
-      calculate_loewdin_charges :: bool
+      calculate_loewdin_charges : bool
           Calculates the Loewdin partial charges. The default is False.
-      spin_mode :: string
+      spin_mode : string
           Sets the spin mode. If no spin mode is set, Turbomole's default for the corresponding
           system is chosen. Options are: restricted, unrestricted.
 
@@ -66,13 +75,13 @@ class TurbomoleSinglePoint(TurbomoleJob):
 
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.input_structure = "system.xyz"
         self.tm_helper = TurbomoleHelper()
 
     # Executes a single point calculation using the dscf script
-    def execute_single_point_calculation(self, job):
+    def execute_single_point_calculation(self, job: db.Job) -> None:
         if job.cores > 1:
             os.environ["PARA_ARCH"] = "SMP"
             os.environ["PARNODES"] = str(job.cores)
@@ -81,9 +90,7 @@ class TurbomoleSinglePoint(TurbomoleJob):
             self.tm_helper.execute("{}".format(os.path.join(self.turboexe, "ridft")))
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
-
-        import scine_database as db
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
         # Gather all required collections
         structures = manager.get_collection("structures")
@@ -180,5 +187,5 @@ class TurbomoleSinglePoint(TurbomoleJob):
         return True
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "utils", "turbomole"]

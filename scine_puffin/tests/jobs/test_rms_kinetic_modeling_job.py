@@ -115,8 +115,8 @@ class RMSKineticModelingTest(JobTestCase):
         enthalpies = [-2e+2, -1.98e+2, -1.97e+2, -1.99e+2, -2.1e+2]
         n = [0, 0, 0, 0]
         start_concentrations = [0.5, 0.4, 0.0, 0.0, 0.0]
-        reference_data = [0.20531956,  0.15521179,  0.20514741,  0.15525519,  0.17906605, 14.3]
-        reference_max = [0.5,         0.4,         0.22863946,  0.22209669,  0.17906605, 14.3]
+        reference_data = [0.20531956, 0.15521179, 0.20514741, 0.15525519, 0.17906605, 14.3]
+        reference_max = [0.5, 0.4, 0.22863946, 0.22209669, 0.17906605, 14.3]
         reference_flux = [0.38552628, 0.37854594, 0.29599325, 0.28901291, 0.17906606]
 
         model = db.Model('FAKE', '', '')
@@ -184,7 +184,7 @@ class RMSKineticModelingTest(JobTestCase):
         all_reaction_ids = [
             add_reaction(self.manager, [c_ids[8]], [c_ids[11], c_ids[12]]).id(),
             add_reaction(self.manager, [c_ids[5]], [c_ids[8]]).id(),
-            add_reaction(self.manager, [c_ids[1],  c_ids[1]], [c_ids[5]]).id(),
+            add_reaction(self.manager, [c_ids[1], c_ids[1]], [c_ids[5]]).id(),
             add_reaction(self.manager, [c_ids[9]], [c_ids[13], c_ids[14], c_ids[1]]).id(),
             add_reaction(self.manager, [c_ids[4]], [c_ids[2]]).id(),
             add_reaction(self.manager, [c_ids[4]], [c_ids[9]]).id(),

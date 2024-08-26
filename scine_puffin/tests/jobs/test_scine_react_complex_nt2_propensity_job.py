@@ -114,8 +114,12 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         assert any(structure.get_multiplicity() == 4 for structure in structures.query_structures("{}"))
         assert any(structure.get_multiplicity() == 6 for structure in structures.query_structures("{}"))
 
-        os.environ["OMP_NUM_THREADS"] = omp
+        if omp is not None:
+            os.environ["OMP_NUM_THREADS"] = omp
+        else:
+            del os.environ['OMP_NUM_THREADS']
 
+    @skip_without('database', 'readuct', 'molassembler')
     def test_propensity_hit(self):
         # import Job
         from scine_puffin.jobs.scine_react_complex_nt2 import ScineReactComplexNt2
@@ -208,8 +212,12 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         assert new_ts.has_property('electronic_energy')
         energy_props = new_ts.get_properties("electronic_energy")
         assert energy_props[0] in results.property_ids
+        assert new_elementary_step.has_spline()
 
         assert any(structure.get_multiplicity() == 1 for structure in structures.query_structures("{}"))
         assert any(structure.get_multiplicity() == 3 for structure in structures.query_structures("{}"))
 
-        os.environ["OMP_NUM_THREADS"] = omp
+        if omp is not None:
+            os.environ["OMP_NUM_THREADS"] = omp
+        else:
+            del os.environ['OMP_NUM_THREADS']

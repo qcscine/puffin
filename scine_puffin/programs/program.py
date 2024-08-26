@@ -21,12 +21,12 @@ class Program:
 
     Parameters
     ----------
-    settings :: dict
+    settings : dict
         The settings for the particular program. This dictionary should be the
         given program's block in the ``Configuration``.
     """
 
-    def __init__(self, settings: dict):
+    def __init__(self, settings: dict) -> None:
         self.version = settings["version"]
         self.root = settings["root"]
         self.source = settings["source"]
@@ -41,13 +41,13 @@ class Program:
 
         Parameters
         ----------
-        repo_dir :: str
+        repo_dir : str
             The folder for all repositories, if a clone or download is required
             for the installation, this folder will be used.
-        install_dir :: str
+        install_dir : str
             If the program is actually installed and not just loaded, this
             folder will be used as target directory for the install process.
-        ncores :: int
+        ncores : int
             The number of cores/threads to be used when compiling/installing
             the program.
         """
@@ -73,13 +73,13 @@ class Program:
 
         Parameters
         ----------
-        config :: scine_puffin.config.Configuration
+        config : scine_puffin.config.Configuration
             The current global configuration.
-        env_paths :: dict
+        env_paths : dict
             A dictionary for all the environment paths, such as ``PATH`` and
             ``LD_LIBRARY_PATH``. The added settings will be appended to the
             existing paths, using ``export PATH=$PATH:...``.
-        env_vars :: dict
+        env_vars : dict
             A dictionary for all fixed environment variables. All settings
             will replace existing variables such as ``export OMP_NUM_THREADS=1``
         """
@@ -92,7 +92,7 @@ class Program:
 
         Returns
         -------
-        models :: List[str]
+        models : List[str]
             A list of names of models that are available if the program is
             available.
         """

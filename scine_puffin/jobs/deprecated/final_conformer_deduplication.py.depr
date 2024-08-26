@@ -7,9 +7,19 @@ See LICENSE.txt for details.
 import os
 import math
 from ast import literal_eval
+from typing import Any, TYPE_CHECKING
+
 from scine_puffin.config import Configuration
 from ..templates.job import Job, calculation_context, job_configuration_wrapper
 from ...utilities import masm_helper
+from scine_puffin.utilities.imports import module_exists
+
+if module_exists("scine_database"):
+    import scine_database as db
+elif TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = Any
 
 
 class FinalConformerDeduplication(Job):
@@ -27,13 +37,13 @@ class FinalConformerDeduplication(Job):
       any ``Calculation`` stored in a SCINE Database.
       Possible settings for this job are:
 
-      use_distance_connectivity :: bool
+      use_distance_connectivity : bool
         If ``True``, the structure's connectivity is derived from interatomic
         distances via the utils.BondDetector: The bond orders used for
         interpretation are set to the maximum between those given in the
         ``bond_orders`` property and 1.0, whereever the utils.BondDetector
         detects a bond, and to 0.0 elsewhere. (default: True)
-      enforce_bond_order_model :: bool
+      enforce_bond_order_model : bool
         If ``True``, only processes ``bond_orders`` that were generated with
         the specified model. If ``False``, eventually falls back to any
         ``bond_orders`` available for the structure. (default: True)
@@ -52,7 +62,7 @@ class FinalConformerDeduplication(Job):
         super().__init__()
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
         # Import required packages
         import scine_database as db
         import scine_molassembler as masm
@@ -212,5 +222,5 @@ class FinalConformerDeduplication(Job):
         return True
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "utils", "molassembler"]

@@ -1,17 +1,28 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 from ast import literal_eval
+from typing import TYPE_CHECKING
 from platform import python_version
 
 from pymatgen.core import Lattice
 from pymatgen.core.surface import Slab
 import pymatgen
-import scine_database as db
-import scine_utilities as utils
+
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    utils = MissingDependency("scine_utilities")
 
 
 def get_slab_dict(structure: db.Structure, properties: db.Collection) -> dict:

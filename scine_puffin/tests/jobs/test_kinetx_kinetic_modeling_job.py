@@ -18,7 +18,6 @@ from ..db_setup import (
     add_reaction,
     add_flask_and_structure
 )
-from ...utilities.compound_and_flask_helpers import get_compound_or_flask
 
 
 class KinetxKineticModelingJobTest(JobTestCase):
@@ -27,6 +26,7 @@ class KinetxKineticModelingJobTest(JobTestCase):
     def test_concentrations(self):
         # import Job
         from scine_puffin.jobs.kinetx_kinetic_modeling import KinetxKineticModeling
+        from scine_puffin.utilities.compound_and_flask_helpers import get_compound_or_flask
         import scine_database as db
 
         # This reaction network is made up and converges fairly quickly.

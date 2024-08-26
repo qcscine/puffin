@@ -1,28 +1,42 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple, Union, Any
-import numpy as np
+from typing import List, Dict, Optional, Tuple, Union, Any, TYPE_CHECKING
+import math
 
-import scine_database as db
+import numpy as np
+from scipy import integrate
 
 from .rms_input_file_creator import create_rms_yml_file, resolve_rms_phase, resolve_rms_solver
 from ..programs.rms import JuliaPrecompiler
+
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    db = MissingDependency("scine_utilities")
 
 
 class RMSKineticModel:
     """
     This class provides an interface to the ReactionMechanismSimulator (RMS) for kinetic modeling.
     """
-    def __init__(self, settings: Dict, manager: db.Manager, model: db.Model, rms_path: str, rms_file_name: str):
+
+    def __init__(self, settings: Dict, manager: db.Manager, model: db.Model, rms_path: str, rms_file_name: str) -> None:
         """
         Parameters:
         -----------
-            settings : Dict[str, Any]
+        settings : Dict[str, Any]
             The settings of the kinetic modeling calculation. This must contain:
                 * The activation energies 'ea'.
                 * The enthalpies 'enthalpies'.
@@ -31,14 +45,14 @@ class RMSKineticModel:
                 * The arrhenius temperature exponents 'arrhenius_temperature_exponents'.
                 * The lower and upper uncertainty bounds for the activation energies and enthalpies.
                 * General settings for the kinetic modeling: Diffusion limited, phase type, aggregate ids, reaction ids,
-                  kinetic modeling solver, start concentrations, maximum integration time.
-            manager : db.Manager
+              kinetic modeling solver, start concentrations, maximum integration time.
+        manager : db.Manager
             The database manager.
-            model : db.Model
+        model : db.Model
             The main electronic structure model (used for default temperature and pressure).
-            rms_path : str
+        rms_path : str
             The path to the RMS shared library.
-            rms_file_name : str
+        rms_file_name : str
             The base file name for the RMS input file.
         """
         self.settings = settings
@@ -81,7 +95,7 @@ class RMSKineticModel:
 
         self.solvent_species_added: bool = False
 
-        self.solvent: str = self.settings["reactor_solvent"]
+        self.solvent: Optional[str] = self.settings["reactor_solvent"]
         if self.solvent == "none":
             self.solvent = model.solvent if model.solvent != "none" else None
         if self.settings["solvent_aggregate_str_id"] != "none":
@@ -110,7 +124,7 @@ class RMSKineticModel:
             enforce_mass_balance = bool(settings["enforce_mass_balance"])
         self.__sanity_checks(manager, enforce_mass_balance)
 
-    def create_yml_file(self, file_name: Optional[str],  h: Optional[List[float]] = None,
+    def create_yml_file(self, file_name: Optional[str], h: Optional[List[float]] = None,
                         s: Optional[List[float]] = None, a: Optional[List[float]] = None,
                         n: Optional[List[float]] = None, ea: Optional[Union[List[float], np.ndarray]] = None):
         """
@@ -135,7 +149,7 @@ class RMSKineticModel:
         create_rms_yml_file(self.a_str_ids, h, s, a, n, ea, self.reactants, file_name, self.solvent, self.viscosity,
                             self.solvent_index)
 
-    def _get_phase(self, file_name: Optional[str] = None,  h: Optional[List[float]] = None,
+    def _get_phase(self, file_name: Optional[str] = None, h: Optional[List[float]] = None,
                    s: Optional[List[float]] = None, a: Optional[List[float]] = None, n: Optional[List[float]] = None,
                    ea: Optional[Union[List[float], np.ndarray]] = None):
         """
@@ -242,8 +256,8 @@ class RMSKineticModel:
         """
         Calculate the molecular weight of the given aggregate
         """
-        import scine_utilities as utils
         a_id = db.ID(a_str_id)
+        aggregate: Union[db.Compound, db.Flask]
         aggregate = db.Compound(a_id, compounds)
         if not aggregate.exists():
             aggregate = db.Flask(a_id, flasks)
@@ -295,7 +309,6 @@ class RMSKineticModel:
         """
         Run an adjoined sensitivity analysis for the microkinetic model.
         """
-        import math
         # pylint: disable=import-error
         from julia import ReactionMechanismSimulator as rms
         # pylint: enable=import-error
@@ -414,7 +427,6 @@ class RMSKineticModel:
         """
         Calculate the absolute edge fluxes.
         """
-        from scipy import integrate
         # pylint: disable=import-error
         from julia import ReactionMechanismSimulator as rms
         # pylint: enable=import-error
@@ -463,18 +475,19 @@ class RMSKineticModel:
 
         Parameters
         ----------
-        ea :: np.ndarray
+        ea : np.ndarray
             The activation energies (in J/mol).
-        h :: Union[List[float], np.ndarray]
+        h : Union[List[float], np.ndarray]
             The enthalpies.
-        s :: Union[List[float], np.ndarray]
+        s : Union[List[float], np.ndarray]
             The entropies.
-        a_str_id :: str
+        a_str_id : str
             The aggregate for which the enthalpy is changed.
 
-        Return
-        ------
-        Returns the updated activation energies.
+        Returns
+        -------
+        np.ndarray
+            Returns the updated activation energies.
         """
         for r_str_id in self.get_aggregate_to_reaction_map()[a_str_id]:
             r_index = self.r_str_ids.index(r_str_id)
@@ -496,14 +509,17 @@ class RMSKineticModel:
 
         Parameters
         ----------
-        ea :: np.ndarray
+        ea : np.ndarray
             The activation energies (in J/mol).
-        h :: Union[List[float], np.ndarray]
+        h : Union[List[float], np.ndarray]
             The enthalpies.
-        s :: Union[List[float], np.ndarray]
+        s : Union[List[float], np.ndarray]
             The entropies.
 
-        Returns the updated activation energies.
+        Returns
+        -------
+        np.ndarray
+            Returns the updated activation energies.
         """
         for a_str_id in self.a_str_ids:
             ea = self.translate_minimum_change_to_barriers(ea, h, s, a_str_id)

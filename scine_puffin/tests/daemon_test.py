@@ -24,7 +24,7 @@ class DatabaseConnection(unittest.TestCase):
 
 
 class ValidJobClasses(unittest.TestCase):
-    @skip_without('database')
+
     def test_job_folder(self):
         config = Configuration()
         config.load()

@@ -18,7 +18,7 @@ def shutdown(_signum, _frame):
 
     Parameters
     ----------
-    _signum :: int
+    _signum : int
         Dummy variable to match the signal dependent function signature.
     _frame
         Dummy variable to match the signal dependent function signature.
@@ -33,7 +33,7 @@ def check_environment(config: Configuration):
 
     Parameters
     ----------.
-    config :: scine_puffin.config.Configuration
+    config : scine_puffin.config.Configuration
         The current configuration of the Puffin.
     """
     if "OMP_NUM_THREADS" in os.environ:
@@ -51,7 +51,7 @@ def stop_daemon(config: Configuration):
 
     Parameters
     ----------.
-    config :: scine_puffin.config.Configuration
+    config : scine_puffin.config.Configuration
         The current configuration of the Puffin.
     """
     # Generate stop file in order to stop after the current job
@@ -74,9 +74,9 @@ def start_daemon(config: Configuration, detach: bool = True):
 
     Parameters
     ----------.
-    config :: scine_puffin.config.Configuration
+    config : scine_puffin.config.Configuration
         The current configuration of the Puffin.
-    detach :: bool
+    detach : bool
         If true, forks the daemon process and detaches it.
     """
     check_environment(config)

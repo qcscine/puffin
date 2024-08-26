@@ -13,6 +13,7 @@ venv/
 .coverage
 .coverage.*
 .cache
+.hypothesis
 coverage.xml
 
 # Sphinx documentation

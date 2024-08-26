@@ -118,15 +118,15 @@ class ScineGeometryValidationJobTest(JobTestCase):
         assert np.allclose(ref_hessian, hessian, atol=1e-1)
         # Normal modes
         ref_normal_modes = np.array([
-            [-6.57555073e-02, 1.26620092e-02, 4.40344617e-02, ],
-            [1.75882705e-03, -4.50720615e-03, 4.28132636e-02, ],
-            [6.25238992e-18, -4.82124061e-18, 2.08537396e-18, ],
-            [6.80766002e-01, -6.84858319e-01, -6.00657576e-02, ],
-            [3.90929440e-01, 4.12321086e-01, 4.06809503e-02, ],
-            [2.59753169e-16, -1.21379778e-17, -1.53607653e-17, ],
-            [3.63010525e-01, 4.83866667e-01, -6.38919610e-01, ],
-            [-4.18848354e-01, -3.40775505e-01, -7.20281511e-01, ],
-            [-4.33840517e-16, 1.20815437e-17, 2.94634947e-17, ],
+            [-6.82647619e-02, 1.27298723e-02, 4.55149739e-02, ],
+            [1.82667950e-03, -4.53157634e-03, 4.42513393e-02, ],
+            [6.49103407e-18, -4.84694439e-18, 2.15525997e-18, ],
+            [7.06741648e-01, -6.88502360e-01, -6.21030118e-02, ],
+            [4.05861756e-01, 4.14501053e-01, 4.20445836e-02, ],
+            [2.69669044e-16, -1.22067159e-17, -1.58816392e-17, ],
+            [3.76865779e-01, 4.86433477e-01, -6.60383413e-01, ],
+            [-4.34857733e-01, -3.42568629e-01, -7.44472580e-01, ],
+            [-4.50402118e-16, 1.21528609e-17, 3.04612875e-17, ],
         ])
         normal_mode_prop = db.DenseMatrixProperty(normal_modes_props[0])
         normal_mode_prop.link(properties)
@@ -261,17 +261,17 @@ class ScineGeometryValidationJobTest(JobTestCase):
         assert hessian.shape == (9, 9)
         assert np.allclose(ref_hessian, hessian, atol=1e-1)
         # Normal modes
-        ref_normal_modes = np.array(
-            [[-4.47497118e-02, -3.85208122e-02, -4.31593322e-02],
-             [-4.47122166e-02, -3.88386563e-02, 4.29126332e-02],
-             [-8.49613600e-18, 5.24295770e-20, 2.59912639e-19],
-             [2.95571230e-02, 6.81190413e-01, 6.85647964e-01],
-             [6.80781838e-01, -6.97265040e-02, -5.54050376e-04],
-             [1.70377797e-16, 1.60989274e-16, 1.17463267e-16],
-             [6.80781838e-01, -6.97265040e-02, -5.54050376e-04],
-             [2.89619394e-02, 6.86235743e-01, -6.80623863e-01],
-             [-2.83048332e-16, -1.53196255e-16, -2.05063421e-16]]
-        )
+        ref_normal_modes = np.array([
+            [-4.63375323e-02, -3.95703688e-02, -4.45850571e-02, ],
+            [-4.62987096e-02, -3.98968446e-02, 4.43302315e-02, ],
+            [-8.79759548e-18, 5.38614204e-20, 2.68498367e-19, ],
+            [3.06061064e-02, 6.99750720e-01, 7.08297607e-01, ],
+            [7.04937280e-01, -7.16265701e-02, -5.72307806e-04, ],
+            [1.76423192e-16, 1.65375651e-16, 1.21343530e-16, ],
+            [7.04937280e-01, -7.16265701e-02, -5.72307806e-04, ],
+            [2.99898507e-02, 7.04933066e-01, -7.03107992e-01, ],
+            [-2.93091491e-16, -1.57370285e-16, -2.11837496e-16, ],
+        ])
         normal_mode_prop = db.DenseMatrixProperty(normal_modes_props[0])
         normal_mode_prop.link(properties)
         normal_modes = normal_mode_prop.get_data()
@@ -300,11 +300,12 @@ class ScineGeometryValidationJobTest(JobTestCase):
         gibbs_energy_correction = gibbs_energy_correction_prop.get_data()
         self.assertAlmostEqual(gibbs_energy_correction, 0.0005468527260594769, delta=1e-5)
 
-    @skip_without('database', 'readuct')
+    @skip_without('database', 'readuct', 'molassembler')
     def test_fail_to_optimize_non_valid_minimum(self):
         # fails because of different graph
         from scine_puffin.jobs.scine_geometry_validation import ScineGeometryValidation
         import scine_database as db
+        import scine_molassembler as masm
 
         # Setup DB for calculation
         h2o2 = os.path.join(resource_path(), "h2o2_distorted.xyz")
@@ -316,9 +317,10 @@ class ScineGeometryValidationJobTest(JobTestCase):
 
         model = db.Model('dftb3', 'dftb3', '')
         model.program = "sparrow"
+        model.spin_mode = "restricted"
         job = db.Job('scine_geometry_validation')
         settings = {
-            "optimization_attempts": 2
+            "val_optimization_attempts": 2
         }
 
         calculation = add_calculation(self.manager, model, job, [structure.id()], settings)
@@ -330,9 +332,9 @@ class ScineGeometryValidationJobTest(JobTestCase):
         success = job.run(self.manager, calculation, config)
         assert not success
         # Check comment of calculation
-        ref_comment = "Scine Geometry Validation Job: End structure does not match starting structure." + \
-            "\nError: Scine Geometry Validation Job failed with message:" + \
-            "\nStructure could not be validated to be a minimum. Hessian information is stored anyway."
+        ref_comment = "\nError: Scine Geometry Validation Job failed with message:" + \
+            "\nFinal structure does not match starting structure. " + \
+            "Structure could not be validated to be a minimum. Hessian information is stored anyway."
         assert calculation.get_comment() == ref_comment
 
         # Check results
@@ -373,18 +375,18 @@ class ScineGeometryValidationJobTest(JobTestCase):
         self.assertAlmostEqual(energy.get_data(), -7.168684600560611, delta=1e-1)
         # Normal modes
         ref_normal_modes = np.array([
-            [-4.31688799e-02, -6.91523883e-03, -1.82492631e-02, -3.86771134e-02, -3.45645862e-02, 3.81068441e-03, ],
-            [-1.65111999e-03, 2.83228734e-03, 2.10319980e-02, -4.31722218e-02, 1.36502269e-03, -5.94798269e-02, ],
-            [-2.99343119e-02, 1.78068975e-01, -2.59408246e-04, -1.58605276e-02, -1.23374087e-02, 2.33946275e-03, ],
-            [4.03868933e-02, -1.78581009e-03, -4.13741993e-03, -6.89669850e-03, -1.88649585e-02, 9.27050089e-04, ],
-            [-3.48727166e-03, -6.65257470e-03, -4.16577386e-02, 5.81676804e-03, 2.25155821e-03, -2.87158874e-04, ],
-            [-2.68061138e-02, -1.69761922e-01, 5.77588045e-02, -5.30648270e-03, 1.05427368e-02, -9.30432318e-04, ],
-            [-2.90044217e-02, 7.59482476e-02, 5.02213061e-02, 1.25262116e-01, 9.65015716e-01, -5.88417133e-02, ],
-            [7.31645599e-02, 6.21687101e-02, 3.05135914e-01, 5.98158280e-01, -1.16896572e-01, -1.63631824e-02, ],
-            [9.47125787e-01, -4.54672494e-03, -7.34029615e-02, -1.01582077e-01, 3.33256908e-02, -7.34742518e-03, ],
-            [7.31645599e-02, 6.21687101e-02, 3.05135914e-01, 5.98158280e-01, -1.16896572e-01, -1.63631824e-02, ],
-            [8.40020643e-03, -1.52700207e-03, 2.22688135e-02, -5.19280259e-03, 5.94884190e-02, 9.65080322e-01, ],
-            [-4.64510457e-02, -1.27316095e-01, -8.39319373e-01, 4.37578701e-01, -4.83778945e-03, -1.50189582e-02, ],
+            [-4.51056224e-02, -2.30053324e-02, -1.91838298e-02, -3.99609071e-02, -3.51840370e-02, 3.93200055e-03, ],
+            [-1.72509150e-03, 9.42119128e-03, 2.21094036e-02, -4.46041374e-02, 1.39010219e-03, -6.13743055e-02, ],
+            [-3.12783219e-02, 5.92381295e-01, -2.71106437e-04, -1.63870079e-02, -1.25590502e-02, 2.41365634e-03, ],
+            [4.21994858e-02, -5.94026789e-03, -4.34931029e-03, -7.12559616e-03, -1.92028040e-02, 9.56529286e-04, ],
+            [-3.64372163e-03, -2.21299691e-02, -4.37910660e-02, 6.00944990e-03, 2.29206345e-03, -2.96324400e-04, ],
+            [-2.80083927e-02, -5.64748740e-01, 6.07151008e-02, -5.48202434e-03, 1.07317405e-02, -9.59698746e-04, ],
+            [-3.03145349e-02, 2.52662209e-01, 5.27982951e-02, 1.29431627e-01, 9.82317479e-01, -6.07141499e-02, ],
+            [7.64453798e-02, 2.06808631e-01, 3.20757324e-01, 6.18000623e-01, -1.19002597e-01, -1.68844103e-02, ],
+            [9.89629279e-01, -1.51090374e-02, -7.71596608e-02, -1.04947466e-01, 3.39323358e-02, -7.58173211e-03, ],
+            [7.64453798e-02, 2.06808631e-01, 3.20757324e-01, 6.18000623e-01, -1.19002597e-01, -1.68844103e-02, ],
+            [8.77700467e-03, -5.07459285e-03, 2.34086814e-02, -5.36404689e-03, 6.05533777e-02, 9.95819233e-01, ],
+            [-4.85357718e-02, -4.23519054e-01, -8.82304042e-01, 4.52087705e-01, -4.92635570e-03, -1.54978070e-02, ],
         ])
 
         normal_mode_prop = db.DenseMatrixProperty(normal_modes_props[0])
@@ -415,7 +417,7 @@ class ScineGeometryValidationJobTest(JobTestCase):
         self.assertAlmostEqual(gibbs_energy_correction, -0.001757357127836201, delta=1e-5)
 
         # Graph
-        assert structure.get_graph("masm_cbor_graph") == ref_graph
+        assert masm.JsonSerialization.equal_molecules(structure.get_graph("masm_cbor_graph"), ref_graph)
 
     @skip_without('database', 'readuct')
     @pytest.mark.filterwarnings("ignore:.+The structure had a graph already")
@@ -434,9 +436,10 @@ class ScineGeometryValidationJobTest(JobTestCase):
 
         model = db.Model('dftb3', 'dftb3', '')
         model.program = "sparrow"
+        model.spin_mode = "restricted"
         job = db.Job('scine_geometry_validation')
         settings = {
-            "optimization_attempts": 2
+            "val_optimization_attempts": 2
         }
 
         calculation = add_calculation(self.manager, model, job, [structure.id()], settings)
@@ -534,15 +537,15 @@ class ScineGeometryValidationJobTest(JobTestCase):
         assert np.allclose(ref_hessian, hessian, atol=1e-1)
         # Normal modes
         ref_normal_modes = np.array([
-            [-2.89597029e-02, -3.15134055e-02, 6.80792263e-02, ],
-            [-6.12657343e-02, -3.78163196e-02, -3.58186536e-02, ],
-            [4.20375520e-18, 2.34897827e-18, 1.00104275e-17, ],
-            [-1.79731098e-01, 7.85076713e-01, -5.36167737e-01, ],
-            [5.37311156e-01, 1.05145171e-01, 8.02545212e-03, ],
-            [-1.04237003e-16, -1.01785409e-16, 7.12699448e-17, ],
-            [6.39425796e-01, -2.84845564e-01, -5.44494573e-01, ],
-            [4.35196516e-01, 4.95135906e-01, 5.60545477e-01, ],
-            [-1.32320360e-16, 7.19185833e-17, -4.43320067e-16, ],
+            [-3.00191566e-02, -3.23938595e-02, 7.15634599e-02, ],
+            [-6.37968518e-02, -3.85915640e-02, -3.76619702e-02, ],
+            [4.38956694e-18, 2.37844772e-18, 1.05262604e-17, ],
+            [-1.87877770e-01, 8.04193332e-01, -5.61620285e-01, ],
+            [5.59025142e-01, 1.07533595e-01, 7.82721537e-03, ],
+            [-1.08329864e-16, -1.04272618e-16, 7.48675733e-17, ],
+            [6.64389811e-01, -2.89986210e-01, -5.74349350e-01, ],
+            [4.53660473e-01, 5.05053400e-01, 5.90003781e-01, ],
+            [-1.38379756e-16, 7.46124958e-17, -4.65817026e-16, ],
         ])
         normal_mode_prop = db.DenseMatrixProperty(normal_modes_props[0])
         normal_mode_prop.link(properties)

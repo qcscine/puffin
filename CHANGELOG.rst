@@ -1,6 +1,32 @@
 Changelog
 =========
 
+Release 2.0.0
+-------------
+
+New Jobs:
+    - Automatic QM region selection for QM/MM.
+    - Job that tries to find a new reaction starting from a transition state guess only.
+    - Job that carries out a fast dissociation reaction trial protocol after optimizing the input structure.
+    - Remove `scine_step_refinement` job.
+
+New Settings:
+    - Add the option `allow_exhaustive_product_decomposition` to jobs that carry out reaction trials, which allows products to decompose and re-optimize them until no further decomposition is observed.
+    - Add the option `always_add_barrierless_step_for_reactive_complex` to jobs that carry out reaction trials, which enables that a barrierless elementary step is added for the reactive complex formation of a bimolecular reaction irrespective of the complexation energy.
+    - Add option `store_structures_with_frequency` and `store_structures_with_fraction` that allow storing a portion of structures per sub-task.
+    - Add option `spin_propensity_ts_check` to `scine_react_ts_guess` job to specify a spin multiplicity range to be checked for the transition state different to the spin multiplicity range to be checked for the reactants and products (`spin_propensity_check`)
+
+Technical changes:
+    - Ensure that the calculated spin states are considered in the calculation of the dissociation energy in the `DissociationCut` jobs and in structure optimizing jobs (`GeometryOptimization` and `ReactTsGuess`)
+    - Write normalized modes in database.
+    - Improve dependency handling and add more typehints.
+    - Optimize only unique structures of the endpoints of an IRC calculation.
+    - Deduplicate code for analyzing both sides of the IRC part in the `scine_react_job`.
+    - Stricter conditions to distribute charges if `expect_charge_separation` is set to `True` by prohibiting changing
+      already changed charge.
+    - Comply docstrings with numpy styling.
+    - Introduce Enums for ReaDuct calls.
+
 Release 1.3.0
 -------------
 

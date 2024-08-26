@@ -19,12 +19,12 @@ def get_test_db_credentials(name: str = "puffin_unittests"):
 
     Parameters
     ----------
-    name :: str
+    name : str
         The name of the database to connect to.
 
     Returns
     -------
-    result :: db.Credentials
+    result : db.Credentials
     The credentials to access the test database.
     """
     import scine_database as db
@@ -40,12 +40,12 @@ def get_clean_db(name: str = "puffin_unittests"):
 
     Parameters
     ----------
-    name :: str
+    name : str
         The name of the database to connect to.
 
     Returns
     -------
-    result :: db.Manager
+    result : db.Manager
         The database manager, connected to the requested server and named
         database.
     """
@@ -70,23 +70,23 @@ def add_structure(manager, xyz_path, label, charge: int = 0, multiplicity: int =
 
     Parameters
     ----------
-    manager :: db.Manager
+    manager : db.Manager
         The manager of the database to create data in.
-    xyz_path :: str
+    xyz_path : str
         Path to the xyz file containing the structures coordinates.
-    label :: db.Label
+    label : db.Label
         The label of the structure to be generated.
-    charge :: int
+    charge : int
         The charge of the structure
-    multiplicity :: int
+    multiplicity : int
         The multiplicity of the structure
-    model :: db.Model, optional
+    model : db.Model, optional
         The model of the structure to be generated. Take db.Model("dftb3", "dftb3", "") with program "Sparrow"
         as default.
 
     Returns
     -------
-    structure :: db.Structure
+    structure : db.Structure
         The generated Structure linked to its collection
     """
     import scine_database as db
@@ -105,21 +105,21 @@ def add_calculation(manager, model, job, structures, settings: Optional[dict] = 
 
     Parameters
     ----------
-    manager :: db.Manager
+    manager : db.Manager
         The manager of the database to create data in.
-    model :: db.Model
+    model : db.Model
         The Model of the calculation.
-    job :: db.Job
+    job : db.Job
         The Job of the calculation.
-    structures :: List[db.ID]
+    structures : List[db.ID]
         List of structure IDs set as structures used as
         input for the calculation
-    settings :: dict
+    settings : dict
         Settings to be set in the Calculation.
 
     Returns
     -------
-    calculation :: db.Calculation
+    calculation : db.Calculation
         The generated Calculation linked to its collection
     """
     import scine_database as db
@@ -143,22 +143,22 @@ def add_compound_and_structure(manager, xyz_file: str = "proline_acid.xyz", char
 
     Parameters
     ----------
-    manager :: db.Manager
+    manager : db.Manager
         The manager of the database to create data in.
-    xyz_file :: str
+    xyz_file : str
         The xyz file name for the structure that is added
-    charge :: int
+    charge : int
         The charge of the structure
-    multiplicity :: int
+    multiplicity : int
         The spin multiplicity of the structure
-    label :: db.Label, optional
+    label : db.Label, optional
         The label of the structure to be generated.
-    model :: db.Model, optional
+    model : db.Model, optional
         The model of the structure to be generated. Take db.Model("dftb3", "dftb3", "") with program "Sparrow"
         as default.
     Returns
     -------
-    compound :: db.Compound
+    compound : db.Compound
         The Compound.
     """
     import scine_database as db
@@ -179,13 +179,13 @@ def add_flask_and_structure(manager, xyz_file: str = "proline_acid.xyz", model: 
 
     Parameters
     ----------
-    manager :: db.Manager
+    manager : db.Manager
         The manager of the database to create data in.
-    xyz_file :: str
+    xyz_file : str
         The xyz file name for the structure that is added
     Returns
     -------
-    flask :: db.Flask
+    flask : db.Flask
         The Flask.
     """
     import scine_database as db
@@ -204,15 +204,15 @@ def add_reaction(manager, lhs_compound_ids, rhs_compound_ids):
 
     Parameters
     ----------
-    manager :: db.Manager
+    manager : db.Manager
         The manager of the database to create data in.
-    lhs_compound_ids :: List[db.ID]
+    lhs_compound_ids : List[db.ID]
         The left-hand side of the reaction.
-    rhs_compound_ids :: List[db.ID]
+    rhs_compound_ids : List[db.ID]
         The right-hand side of the reaction.
     Returns
     -------
-    compound :: db.Compound
+    compound : db.Compound
         The Reaction.
     """
     import scine_database as db

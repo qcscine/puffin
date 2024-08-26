@@ -4,6 +4,7 @@ Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Gr
 See LICENSE.txt for details.
 """
 
+import os
 from typing import List, Optional
 
 from .program import Program
@@ -76,7 +77,6 @@ class JuliaPrecompiler(object):
         # pylint: enable=attribute-defined-outside-init
 
     def compile_julia(self):
-        import os
         # Try to load the system image if the file already exists.
         if self.root:
             if ".so" not in self.root or not os.path.exists(self.root):

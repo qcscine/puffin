@@ -1,32 +1,47 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
-import numpy as np
+from typing import Any, TYPE_CHECKING, Tuple, Dict, List, Optional
 import sys
+
+import numpy as np
 
 from scine_puffin.config import Configuration
 from .templates.job import breakable, calculation_context, job_configuration_wrapper
-from .templates.scine_react_job import HessianJob, OptimizationJob, ConnectivityJob
+from .templates.scine_hessian_job import HessianJob
+from .templates.scine_optimization_job import OptimizationJob
+from .templates.scine_connectivity_job import ConnectivityJob
+from .templates.scine_job_with_observers import ScineJobWithObservers
+from scine_puffin.utilities.imports import module_exists, requires, MissingDependency
+from scine_puffin.utilities.scine_helper import SettingsManager
+from scine_puffin.utilities.task_to_readuct_call import SubTaskToReaductCall
 
-# TODO: Guess this should inherit from a template
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    utils = MissingDependency("scine_database")
 
 
-class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
+class ScineGeometryValidation(ScineJobWithObservers, HessianJob, OptimizationJob, ConnectivityJob):
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.name = "Scine Geometry Validation Job"
         self.validation_key = "val"
         self.opt_key = "opt"
-        self.job_key = self.validation_key
 
         val_defaults = {
             "imaginary_wavenumber_threshold": 0.0,
             "fix_distortion_step_size": -1.0,
-            "distortion_inversion_point": 2.0,
+            "distortion_inversion_point": 0.2,
             "optimization_attempts": 0,
         }
         opt_defaults = {
@@ -35,22 +50,22 @@ class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
             "geoopt_coordinate_system": "cartesianWithoutRotTrans"
         }
 
-        self.settings = {
-            "val": val_defaults,
-            "opt": opt_defaults,
+        self.settings: Dict[str, Dict[str, Any]] = {
+            **self.settings,
+            self.validation_key: val_defaults,
+            self.opt_key: opt_defaults,
         }
         self.start_graph = ""
         self.start_key = ""
         self.end_graph = ""
         self.end_key = ""
-        self.systems = {}
-        self.inputs = []
+        self.systems: Dict[str, Optional[utils.core.Calculator]] = {}
+        self.inputs: List[str] = []
         self.optimization_attempts_count = 0
 
     @job_configuration_wrapper
-    def run(self, _, calculation, config: Configuration) -> bool:
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
-        import scine_database as db
         import scine_readuct as readuct
         import scine_molassembler as masm
 
@@ -73,7 +88,8 @@ class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
             self.start_graph = structure.get_graph("masm_cbor_graph")
 
             if program_helper is not None:
-                program_helper.calculation_preprocessing(self.systems[self.start_key], calculation.get_settings())
+                program_helper.calculation_preprocessing(self.get_calc(self.start_key, self.systems),
+                                                         calculation.get_settings())
 
             # # # # Extract Job settings
             self.sort_settings(settings_manager.task_settings)
@@ -83,6 +99,7 @@ class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
             opt_success = True
             clear_to_write = False
             self.end_key = self.start_key
+            exception_message = ""
 
             # Enter Run Loop for number of allowed attempts
             while self.optimization_attempts_count <= self.settings[self.validation_key]['optimization_attempts']:
@@ -97,14 +114,14 @@ class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
                     "Hessian calculation failed.\n",
                 )
                 # Process hessian calculation
-                _ = self.calculation_postprocessing(success, self.systems, self.inputs, [
-                                                    "energy", "hessian", "thermochemistry"])
+                self.calculation_postprocessing(success, self.systems, self.inputs, [
+                                                "energy", "hessian", "thermochemistry"])
 
                 # Frequency check
-                hessian_results = self.systems[self.end_key].get_results()
+                hessian_results = self.get_calc(self.end_key, self.systems).get_results()
                 false_minimum, mode_container = self.has_wavenumber_below_threshold(
                     hessian_results,
-                    self.systems[self.end_key].structure,
+                    self.get_calc(self.end_key, self.systems).structure,
                     self.settings[self.validation_key]["imaginary_wavenumber_threshold"]
                 )
 
@@ -112,8 +129,9 @@ class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
                     """ SP JOB """
                     # Copy calculator and delete its previous results
                     end_sp_key = self.end_key + "_sp"
-                    self.systems[end_sp_key] = self.systems[self.end_key].clone()
-                    self.systems[end_sp_key].delete_results()
+                    end_calc = self.get_calc(self.end_key, self.systems).clone()
+                    end_calc.delete_results()
+                    self.systems[end_sp_key] = end_calc
 
                     # Check graph
                     self.end_graph, self.systems = self.make_graph_from_calc(self.systems, end_sp_key)
@@ -124,7 +142,7 @@ class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
                     print(self.end_graph)
                     # Compare start and end graph
                     if not masm.JsonSerialization.equal_molecules(self.start_graph, self.end_graph):
-                        self._calculation.set_comment(self.name + ": End structure does not match starting structure.")
+                        exception_message += "Final structure does not match starting structure. "
                         clear_to_write = False
                     else:
                         clear_to_write = True
@@ -148,8 +166,8 @@ class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
                     end_opt_key = "distorted_opt_" + str(self.optimization_attempts_count)
                     self.settings[self.opt_key]["output"] = [end_opt_key]
                     # # # Optimization, per default stop on error is false
-                    self.systems, opt_success = readuct.run_opt_task(
-                        self.systems, self.inputs, **self.settings[self.opt_key])
+                    self.systems, opt_success = self.observed_readuct_call(
+                        SubTaskToReaductCall.OPT, self.systems, self.inputs, **self.settings[self.opt_key])
                     # Update inputs and end key for next round
                     self.inputs = self.settings[self.opt_key]["output"]
                     self.end_key = self.inputs[0]
@@ -164,41 +182,47 @@ class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
             self.verify_connection()
 
             if clear_to_write:
-                final_sp_results = self.systems[end_sp_key].get_results()
+                final_sp_results = self.get_calc(end_sp_key, self.systems).get_results()
+                if final_sp_results.bond_orders is None:
+                    self.raise_named_exception("No bond orders found in results.")
+                    raise RuntimeError("Unreachable")  # for linters
                 # # # Store Energy and Bond Orders overwrites existing results of identical model
-                self.store_energy(self.systems[end_sp_key], structure)
+                self.store_energy(self.get_calc(end_sp_key, self.systems), structure)
                 self.store_property(self._properties,
                                     "bond_orders", "SparseMatrixProperty",
                                     final_sp_results.bond_orders.matrix,
                                     self._calculation.get_model(), self._calculation, structure)
                 # Store hessian information
-                self.store_hessian_data(self.systems[self.end_key], structure)
+                self.store_hessian_data(self.get_calc(self.end_key, self.systems), structure)
 
                 # Only overwrite positions, if an optimization was attempted
                 if self.optimization_attempts_count != 0:
                     # Overwrite positions
                     org_atoms = structure.get_atoms()
-                    position_shift = self.systems[self.end_key].structure.positions - org_atoms.positions
+                    position_shift = self.get_calc(self.end_key, self.systems).structure.positions - org_atoms.positions
                     # # # Store Position Shift
                     self.store_property(self._properties, "position_shift", "DenseMatrixProperty",
                                         position_shift, self._calculation.get_model(), self._calculation, structure)
-                    structure.set_atoms(self.systems[self.end_key].structure)
+                    structure.set_atoms(self.get_calc(self.end_key, self.systems).structure)
                     # # # Overwrite graph if structure has changed, decision list and idx map might have changed
                     self.add_graph(structure, final_sp_results.bond_orders)
             else:
                 self.store_hessian_data(self.systems[self.start_key], structure)
                 self.capture_raw_output()
                 self.raise_named_exception(
+                    exception_message +
                     "Structure could not be validated to be a minimum. Hessian information is stored anyway."
                 )
 
         return self.postprocess_calculation_context()
 
-    @staticmethod
-    # TODO: add proper typing
-    def has_wavenumber_below_threshold(calc_results, atoms, wavenumber_threshold: float):
-        import scine_utilities as utils
-        true_minimum = False
+    @requires("utilities")
+    def has_wavenumber_below_threshold(self, calc_results: utils.Results, atoms: utils.AtomCollection,
+                                       wavenumber_threshold: float) -> Tuple[bool, utils.normal_modes.container]:
+        false_minimum = False
+        if calc_results.hessian is None:
+            self.raise_named_exception("Results are missing a Hessian")
+            raise RuntimeError("Unreachable")  # for linters
         # Get normal modes and frequencies
         modes_container = utils.normal_modes.calculate(calc_results.hessian, atoms.elements, atoms.positions)
         # Wavenumbers in cm-1
@@ -206,35 +230,35 @@ class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
         # Get minimal frequency
         min_wavenumber = np.min(wavenumbers)
         if min_wavenumber < 0.0 and abs(min_wavenumber) > wavenumber_threshold:
-            true_minimum = True
+            false_minimum = True
 
-        return true_minimum, modes_container
+        return false_minimum, modes_container
 
-    def _distort_structure_and_load_calculator(self, mode_container, settings_manager):
-        import scine_utilities as utils
+    @requires("utilities")
+    def _distort_structure_and_load_calculator(self, mode_container: utils.normal_modes.container,
+                                               settings_manager: SettingsManager) -> None:
         wavenumbers = np.asarray(mode_container.get_wave_numbers())
         img_wavenumber_indices = np.where(wavenumbers < 0.0)[0]
         modes = [utils.normal_modes.mode(wavenumbers[i], mode_container.get_mode(i))
                  for i in img_wavenumber_indices]
+        max_steps = [utils.normal_modes.get_harmonic_inversion_point(
+                     wavenumbers[i], self.settings[self.validation_key]['distortion_inversion_point'])
+                     for i in img_wavenumber_indices]
 
         # Distortion according to inversion point
-        if self.settings[self.job_key]['fix_distortion_step_size'] == -1.0:
-            max_steps = [utils.normal_modes.get_harmonic_inversion_point(
-                wavenumbers[i], self.settings[self.job_key]['distortion_inversion_point'])
-                for i in img_wavenumber_indices]
-        else:
-            max_steps = [self.settings[self.job_key]['fix_distortion_step_size'] * len(modes)]
-
+        if self.settings[self.validation_key]['fix_distortion_step_size'] != -1.0:
+            max_steps = np.array(max_steps) / np.max(max_steps) * \
+                self.settings[self.validation_key]['fix_distortion_step_size']
         # Only one direction, could be improved by distorting in other direction
         # # # Displace along modes with img wavenumbers and load calculator
         distorted_positions = utils.geometry.displace_along_modes(
-            self.systems[self.end_key].structure.positions,
+            self.get_calc(self.end_key, self.systems).structure.positions,
             modes, max_steps)
         distorted_key = "distorted_guess_" + str(self.optimization_attempts_count)
         xyz_name = distorted_key + ".xyz"
         # Write file and load into calculator
         distorted_atoms = utils.AtomCollection(
-            self.systems[self.end_key].structure.elements, distorted_positions)
+            self.get_calc(self.end_key, self.systems).structure.elements, distorted_positions)
         utils.io.write(xyz_name, distorted_atoms)
         distorted_calculator = utils.core.load_system_into_calculator(
             xyz_name,
@@ -244,35 +268,3 @@ class ScineGeometryValidation(HessianJob, OptimizationJob, ConnectivityJob):
         # Load into systems and update inputs for next step
         self.systems[distorted_key] = distorted_calculator
         self.inputs = [distorted_key]
-
-    def sort_settings(self, task_settings: dict):
-        """
-        Take settings of configured calculation and save them in class member. Throw exception for unknown settings.
-
-        Notes
-        -----
-        * Requires run configuration
-        * May throw exception
-
-        Parameters
-        ----------
-        task_settings :: dict
-            A dictionary from which the settings are taken
-        """
-        self.extract_connectivity_settings_from_dict(task_settings)
-        # Dissect settings into individual user task_settings
-        for key, value in task_settings.items():
-            for task in self.settings.keys():
-                if task == self.job_key:
-                    if key in self.settings[task].keys():
-                        self.settings[task][key] = value
-                        break  # found right task, leave inner loop
-                else:
-                    indicator_length = len(task) + 1  # underscore to avoid ambiguities
-                    if key[:indicator_length] == task + "_":
-                        self.settings[task][key[indicator_length:]] = value
-                        break  # found right task, leave inner loop
-            else:
-                self.raise_named_exception(
-                    "The key '{}' was not recognized.".format(key)
-                )

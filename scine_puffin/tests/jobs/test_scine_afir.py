@@ -40,7 +40,8 @@ class ScineAfirOptimizationJobTest(JobTestCase):
         settings = {
             "afir_afir_lhs_list": [3, 16],
             "afir_afir_rhs_list": [17, 20],
-            "afir_convergence_max_iterations": 800
+            "afir_convergence_max_iterations": 800,
+            "spin_propensity_check": 0,
         }
         calculation = add_calculation(self.manager, model, job, [structure.id()], settings)
 
@@ -77,14 +78,14 @@ class ScineAfirOptimizationJobTest(JobTestCase):
     @skip_without('database', 'readuct', 'molassembler')
     def test_user_guess(self):
         import scine_database as db
-        self.run_by_label(db.Label.USER_GUESS, db.Label.USER_COMPLEX_OPTIMIZED)
+        self.run_by_label(db.Label.USER_GUESS, db.Label.USER_OPTIMIZED)
 
     @skip_without('database', 'readuct', 'molassembler')
     def test_minimum_guess(self):
         import scine_database as db
-        self.run_by_label(db.Label.MINIMUM_GUESS, db.Label.COMPLEX_OPTIMIZED)
+        self.run_by_label(db.Label.MINIMUM_GUESS, db.Label.MINIMUM_OPTIMIZED)
 
     @skip_without('database', 'molassembler', 'readuct')
     def test_surface_guess(self):
         import scine_database as db
-        self.run_by_label(db.Label.SURFACE_GUESS, db.Label.SURFACE_COMPLEX_OPTIMIZED)
+        self.run_by_label(db.Label.SURFACE_GUESS, db.Label.SURFACE_OPTIMIZED)

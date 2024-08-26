@@ -1,18 +1,31 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+from typing import TYPE_CHECKING, List
+
 from scine_puffin.config import Configuration
-from .templates.job import calculation_context, job_configuration_wrapper
-from .templates.scine_job import ScineJob
+from scine_puffin.jobs.templates.job import calculation_context, job_configuration_wrapper
+from scine_puffin.jobs.templates.scine_job import ScineJob
+from scine_puffin.utilities.qm_mm_settings import prepare_optional_settings
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class ScineSinglePoint(ScineJob):
     """
     A job calculating the electronic energy for a given structure with a given
     model.
+
+    QM/MM and MM calculations expect the presence of bond orders ('bond_orders'), (optionally) atomic
+    charges ('atomic_charges'), and the QM-atom selection ('qm_atoms') as properties of the structure.
 
     **Order Name**
       ``scine_single_point``
@@ -28,7 +41,7 @@ class ScineSinglePoint(ScineJob):
 
       Common examples are:
 
-      max_scf_iterations :: int
+      max_scf_iterations : int
          The number of allowed SCF cycles until convergence.
 
     **Required Packages**
@@ -46,14 +59,13 @@ class ScineSinglePoint(ScineJob):
         The ``atomic_charges`` associated with the given structure (if available).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.name = "Scine Single Point Calculation Job"
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
-        import scine_database as db
         import scine_readuct as readuct
 
         # preprocessing of structure
@@ -62,17 +74,17 @@ class ScineSinglePoint(ScineJob):
 
         # actual calculation
         with calculation_context(self):
+            prepare_optional_settings(structure, calculation, settings_manager, self._properties)
             systems, keys = settings_manager.prepare_readuct_task(
                 structure, calculation, calculation.get_settings(), config["resources"]
             )
             if program_helper is not None:
-                program_helper.calculation_preprocessing(systems[keys[0]], calculation.get_settings())
+                program_helper.calculation_preprocessing(self.get_calc(keys[0], systems), calculation.get_settings())
             systems, success = readuct.run_sp_task(systems, keys, **settings_manager.task_settings)
-
             self.sp_postprocessing(success, systems, keys, structure, program_helper)
 
         return self.postprocess_calculation_context()
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "readuct", "utils"]

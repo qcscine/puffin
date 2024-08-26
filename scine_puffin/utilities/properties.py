@@ -16,7 +16,7 @@ def single_particle_energy_to_matrix(x: utils.SingleParticleEnergies) -> np.ndar
 
     Parameters
     ----------
-    x :: utils.SingleParticleEnergies
+    x : utils.SingleParticleEnergies
         The single particle energies to be converted to numpy matrices. It
         contains the energies and flags denoting the restricted or unrestricted
         case.
@@ -35,16 +35,15 @@ def single_particle_energy_from_matrix(x: np.ndarray) -> utils.SingleParticleEne
 
     Parameters
     ----------
-    x :: np.ndarray
+    x : np.ndarray
         The array of dimension $1 \times N$ for the restricted case or $2
         \times N$ for the unrestricted case, where $N$ is the number energies.
     """
     if np.shape(x)[0] == 1:  # restricted case
         a = utils.SingleParticleEnergies.make_restricted()
-        a.restricted_energies = x[0]
+        a.set_restricted(x[0])
         return a
     else:
         a = utils.SingleParticleEnergies.make_unrestricted()
-        a.alpha = x[0]
-        a.beta = x[1]
+        a.set_unrestricted(x[0], x[1])
         return a

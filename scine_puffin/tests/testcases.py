@@ -5,97 +5,80 @@ Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Gr
 See LICENSE.txt for details.
 """
 
+import sys
 import unittest
 from functools import wraps
-from pkgutil import iter_modules
-from typing import Callable, Dict, List, Union
-from .db_setup import get_clean_db
-from scine_puffin.config import Configuration
+from typing import Callable, Dict, List, Union, TYPE_CHECKING
 import os
 import shutil
 
+from scine_puffin.config import Configuration
+from scine_puffin.utilities.imports import (module_exists, calculator_import_resolve, dependency_addition,
+                                            MissingDependency)
+from .db_setup import get_clean_db
 
-def module_exists(module_name: str) -> bool:
-    if module_name.lower() == "cp2k":
-        return os.getenv("CP2K_BINARY_PATH") is not None
-    elif module_name.lower() == "gaussian":
-        return os.getenv("GAUSSIAN_BINARY_PATH") is not None
-    elif module_name.lower() == "orca":
-        return os.getenv("ORCA_BINARY_PATH") is not None
-    elif module_name.lower() == "turbomole":
-        return os.getenv("TURBODIR") is not None
-    elif module_name.lower() == "ams":
-        possibles = ['AMSHOME', 'AMSBIN', 'AMS_BINARY_PATH']
-        return any(os.getenv(p) is not None for p in possibles)
-    elif module_name.lower() == "mrcc":
-        return os.getenv("MRCC_BINARY_PATH") is not None
-    else:
-        return module_name in (name for loader, name, ispkg in iter_modules())
+if module_exists("pytest") or TYPE_CHECKING:
+    import pytest
+else:
+    pytest = MissingDependency("pytest")
 
 
 def _skip(func: Callable, error: str):
     if module_exists("pytest"):
-        import pytest
         return pytest.mark.skip(reason=error)(func)
     else:
         return unittest.skip(error)(func)
 
 
-def dependency_addition(dependencies: List[str]) -> List[str]:
-    # allow to give scine packages without 'scine_' prefix
-    short_terms = ['readuct', 'swoose', 'sparrow', 'molassembler', 'database', 'utilities', 'kinetx', 'xtb_wrapper',
-                   'ams_wrapper', 'serenity_wrapper', 'dftbplus_wrapper']
-    dependencies = ['scine_' + d if d in short_terms else d for d in dependencies]
-    # dependencies of key as value list, only utilities must not be included
-    dependency_data = {
-        'scine_readuct': ['scine_sparrow'],
-    }
-    for package, dependency in dependency_data.items():
-        if package in dependencies:
-            dependencies += dependency
-    # add utilities
-    if any('scine' in d for d in dependencies):
-        dependencies.append('scine_utilities')
-    return list(set(dependencies))  # give back unique list
-
-
 def skip_without(*dependencies) -> Callable:
+    """
+    This function is meant to be used as a decorator for individual unittest functions. It will skip the test if the
+    required dependencies are not installed or if the database is not running.
+
+    Example
+    -------
+    Add this function as a decorator with the required modules as arguments
+
+    >>> @skip_without("readuct", "database")
+    >>> def test_function():
+    >>>     ...
+
+    Returns
+    -------
+    Callable
+        The wrapped function.
+    """
     dependency_list: List[str] = list(dependencies)
     dependency_list = dependency_addition(dependency_list)
 
     def wrap(f: Callable):
-        if all(module_exists(d) for d in dependency_list):
-            @wraps(f)
-            def wrapped_f(*args, **kwargs):
-                calculator_import_resolve(dependency_list)
-                f(*args, **kwargs)
-            return wrapped_f
-        else:
+
+        if not all(module_exists(d) for d in dependency_list):
             return _skip(f, "Test requires {:s}".format([d for d in dependency_list if not module_exists(d)][0]))
+
+        @wraps(f)
+        def wrapped_f(*args, **kwargs):
+            calculator_import_resolve(dependency_list)
+            f(*args, **kwargs)
+
+        if "scine_database" not in dependency_list:
+            return wrapped_f
+        try:
+            get_clean_db()
+            return wrapped_f
+        except RuntimeError as e:
+            if module_exists("pytest"):
+                pytest.exit("{:s}\nFirst start database before running unittests.".format(str(e)))
+            else:
+                print("{:s}\nFirst start database before running unittests.".format(str(e)))
+                sys.exit(1)
 
     return wrap
 
 
-def calculator_import_resolve(dependency_list: List[str]) -> None:
-    # ensure that calculators can be loaded
-    for d in dependency_list:
-        if d == "scine_sparrow":
-            import scine_sparrow  # noqa # pylint: disable=(unused-import,import-error)
-        elif d == "scine_ams_wrapper":
-            import scine_ams_wrapper  # noqa # pylint: disable=(unused-import,import-error)
-        elif d == "scine_dftbplus_wrapper":
-            import scine_dftbplus_wrapper  # noqa # pylint: disable=(unused-import,import-error)
-        elif d == "scine_serenity_wrapper":
-            import scine_serenity_wrapper  # noqa # pylint: disable=(unused-import,import-error)
-        elif d == "scine_swoose":
-            import scine_swoose  # noqa # pylint: disable=(unused-import,import-error)
-        elif d == "scine_xtb_wrapper":
-            import scine_xtb_wrapper  # noqa # pylint: disable=(unused-import,import-error)
-
-
 class JobTestCase(unittest.TestCase):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.db_name = "default_puffin_unittest_db"
         self.start_dir = os.getcwd()

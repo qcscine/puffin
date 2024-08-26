@@ -1,13 +1,22 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+from typing import TYPE_CHECKING
+
 from ..utilities import scine_helper
 from scine_puffin.config import Configuration
 from .templates.job import calculation_context, job_configuration_wrapper
 from .templates.scine_optimization_job import OptimizationJob
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class ScineIrcScan(OptimizationJob):
@@ -24,17 +33,17 @@ class ScineIrcScan(OptimizationJob):
 
       All settings recognized by ReaDuct's IRC task. For a complete list see
       the
-      `ReaDuct manual <https://scine.ethz.ch/static/download/readuct_manual.pdf>`_
+      `ReaDuct manual <https://scine.ethz.ch/download/readuct>`_
 
       Common examples are:
 
-      stop_on_error :: bool
+      stop_on_error : bool
          If ``False``, the optimization does not need to fully converge but will
          be accepted as a success even if it reaches the maximum amounts of
          optimization cycles. Also, the resulting structures will be flagged as
          ``minimum_guess`` if this option is set ot be ``False``.
          (Default: ``True``)
-      irc_mode :: int
+      irc_mode : int
          The mode to follow during the IRC scan. By default, the first mode (0).
          (mode with the larges imaginary frequency will be followed).
 
@@ -42,7 +51,7 @@ class ScineIrcScan(OptimizationJob):
 
       Common examples are:
 
-      max_scf_iterations :: int
+      max_scf_iterations : int
          The number of allowed SCF cycles until convergence.
 
     **Required Packages**
@@ -65,14 +74,12 @@ class ScineIrcScan(OptimizationJob):
         structures.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.name = "Scine IRC Job"
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
-
-        import scine_database as db
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
         import scine_readuct as readuct
 
         # Get structure
@@ -85,7 +92,7 @@ class ScineIrcScan(OptimizationJob):
                 structure, calculation, calculation.get_settings(), config["resources"]
             )
             if program_helper is not None:
-                program_helper.calculation_preprocessing(systems[keys[0]], calculation.get_settings())
+                program_helper.calculation_preprocessing(self.get_calc(keys[0], systems), calculation.get_settings())
             # Task specific operation
             settings_manager.task_settings["output"] = ["forward", "backward"]
             stop_on_error = settings_manager.task_settings.get("stop_on_error", True)
@@ -95,7 +102,7 @@ class ScineIrcScan(OptimizationJob):
             results_check, results_err = self.expected_results_check(systems, ["forward", "backward"])
             if not results_check:
                 self.raise_named_exception(results_err)
-            scine_helper.update_model(systems[keys[0]], self._calculation, config)
+            scine_helper.update_model(self.get_calc(keys[0], systems), self._calculation, config)
 
             is_surface = structure.has_property("surface_atom_indices")
             label = db.Label.SURFACE_OPTIMIZED if is_surface else db.Label.MINIMUM_OPTIMIZED
@@ -118,7 +125,7 @@ class ScineIrcScan(OptimizationJob):
                 db_results.add_structure(new_structure.id())
 
                 # properties
-                self.store_energy(systems[name], new_structure)
+                self.store_energy(self.get_calc(name, systems), new_structure)
                 self.transfer_properties(structure, new_structure)
 
                 if program_helper is not None:

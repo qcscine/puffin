@@ -1,22 +1,34 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
-import scine_database as db
-import scine_utilities as utils
-
+import sys
 from copy import deepcopy
+from typing import TYPE_CHECKING, Dict
+
 from scine_puffin.config import Configuration
 from .templates.job import breakable, calculation_context, job_configuration_wrapper
 from .templates.scine_react_job import ReactJob
 from typing import Optional, List
 from scine_puffin.utilities.scine_helper import SettingsManager
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    utils = MissingDependency("scine_database")
 
 
 class ScineBsplineOptimization(ReactJob):
-    """
+    __doc__ = ("""
     The job interpolated between two structures. Generates a transition state guess,
     optimizes the transition state, and verifies the IRC.
 
@@ -42,7 +54,7 @@ class ScineBsplineOptimization(ReactJob):
       any ``Calculation`` stored in a SCINE Database.
       All possible settings for this job are based on those available in SCINE
       ReaDuct. For a complete list see the
-      `ReaDuct manual <https://scine.ethz.ch/static/download/readuct_manual.pdf>`_
+      `ReaDuct manual <https://scine.ethz.ch/download/readuct>`_
 
       Given that this job does more than one, in fact many separate calculations
       it is possible to target each individually with the settings. In order to
@@ -62,63 +74,14 @@ class ScineBsplineOptimization(ReactJob):
        3. Optimization of the structures obtained with the IRC scan : ``ircopt_*``
        4. Optimization of the products and reactants: ``opt_*``
 
-      The following settings are recognized without a prepending flag:
+    """ + "\n"
+               + ReactJob.optional_settings_doc() + "\n"
+               + ReactJob.general_calculator_settings_docstring() + "\n"
+               + ReactJob.generated_data_docstring() + "\n"
+               + ReactJob.required_packages_docstring()
+               )
 
-      add_based_on_distance_connectivity :: bool
-          Whether to add the connectivity (i.e. add bonds) as derived from
-          atomic distances when graphs are generated. (default: True)
-      sub_based_on_distance_connectivity :: bool
-          Whether to subtract the connectivity (i.e. remove bonds) as derived from
-          atomic distances when graphs are generated. (default: True)
-      only_distance_connectivity :: bool
-          Whether to impose the connectivity solely from distances. (default: False)
-      imaginary_wavenumber_threshold :: float
-          Threshold value in inverse centimeters below which a wavenumber
-          is considered as imaginary when the transition state is analyzed.
-          Negative numbers are interpreted as imaginary. (default: 0.0)
-      spin_propensity_check :: int
-          The range to check for possible multiplicities for products. A value
-          of 2 (default) will check triplet and quintet for a singlet
-          and will check singlet, quintet und septet for triplet.
-
-      Additionally, all settings that are recognized by the SCF program chosen.
-      are also available. These settings are not required to be prepended with
-      any flag.
-
-      Common examples are:
-
-      max_scf_iterations :: int
-         The number of allowed SCF cycles until convergence.
-
-    **Required Packages**
-      - SCINE: Database (present by default)
-      - SCINE: molassembler (present by default)
-      - SCINE: Readuct (present by default)
-      - SCINE: Utils (present by default)
-      - A program implementing the SCINE Calculator interface, e.g. Sparrow
-
-    **Generated Data**
-      If successful (technically and chemically) the following data will be
-      generated and added to the database:
-
-      Elementary Steps
-        If found, a single new elementary step with the associated transition
-        state will be added to the database.
-
-      Structures
-        The transition state (TS) and also the separated products and reactants
-        will be added to the database.
-
-      Properties
-        The ``hessian`` (``DenseMatrixProperty``), ``frequencies``
-        (``VectorProperty``), ``normal_modes`` (``DenseMatrixProperty``),
-        ``gibbs_energy_correction`` (``NumberProperty``) and
-        ``gibbs_free_energy`` (``NumberProperty``) of the TS will be
-        provided. The ``electronic_energy`` associated with the TS structure and
-        each of the products will be added to the database.
-    """
-
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.name = "Scine double ended transition state optimization from b-splines"
         self.exploration_key = "bspline"
@@ -149,11 +112,11 @@ class ScineBsplineOptimization(ReactJob):
             "tsopt": tsopt_defaults,
             "irc": irc_defaults,
             "ircopt": ircopt_defaults,
-            "opt": opt_defaults,
+            self.opt_key: opt_defaults,
         }
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
         import scine_readuct as readuct
         import scine_molassembler as masm
@@ -313,9 +276,9 @@ class ScineBsplineOptimization(ReactJob):
         p_fragments, p_graph, p_charges, p_multi, _ = self.__set_up_calculator(
             p_structure, settings_manager, p_name)
         # check graph of spline ends
-        opt_r_fragments, opt_r_graph, opt_r_charges, opt_r_multiplicities, _ =\
+        opt_r_fragments, opt_r_graph, opt_r_charges, opt_r_multiplicities, _ = \
             self.get_graph_charges_multiplicities(opt_name_reactant, charge)
-        opt_p_fragments, opt_p_graph, opt_p_charges, opt_p_multiplicities, _ =\
+        opt_p_fragments, opt_p_graph, opt_p_charges, opt_p_multiplicities, _ = \
             self.get_graph_charges_multiplicities(opt_name_product, charge)
         # create structures for optimized ends
         if ";" in opt_r_graph:
@@ -356,14 +319,53 @@ class ScineBsplineOptimization(ReactJob):
         Optimize the input structures + generate graphs.
         """
         # optimize spline ends
-        opt_name_reactant = self.optimize_structures("opt_reactant", [reactant_structure.get_atoms()],
-                                                     [reactant_structure.get_charge()],
-                                                     [reactant_structure.get_multiplicity()],
-                                                     deepcopy(settings_manager.calculator_settings.as_dict()))
-        opt_name_product = self.optimize_structures("opt_product", [products_structure.get_atoms()],
-                                                    [products_structure.get_charge()],
-                                                    [products_structure.get_multiplicity()],
-                                                    deepcopy(settings_manager.calculator_settings.as_dict()))
+        """ Reactant """
+        opt_name_reactant, self.systems = self.optimize_structures("opt_reactant", self.systems,
+                                                                   [reactant_structure.get_atoms()],
+                                                                   [reactant_structure.get_charge()],
+                                                                   [reactant_structure.get_multiplicity()],
+                                                                   deepcopy(
+                                                                       settings_manager.calculator_settings.as_dict()))
+        if len(opt_name_reactant) != 1:
+            self.raise_named_exception("The optimization of the reactant structure failed.")
+            raise RuntimeError("Unreachable")
+        lowest_r_name, _ = self._get_propensity_names_within_range(
+            opt_name_reactant[0], self.systems, self.settings[self.propensity_key]["energy_range_to_optimize"]
+        )
+        if lowest_r_name is None:
+            self.raise_named_exception("No reactant optimization was successful.")
+            raise RuntimeError("Unreachable")
+        if lowest_r_name != opt_name_reactant[0]:
+            sys.stderr.write(f"Warning: Detected a lower energy spin multiplicity of "
+                             f"{self.get_multiplicity(self.get_system(lowest_r_name))} for the reactant.")
+            opt_name_reactant = [lowest_r_name]
+
+        """ Product """
+        opt_name_product, self.systems = self.optimize_structures("opt_product", self.systems,
+                                                                  [products_structure.get_atoms()],
+                                                                  [products_structure.get_charge()],
+                                                                  [products_structure.get_multiplicity()],
+                                                                  deepcopy(
+                                                                      settings_manager.calculator_settings.as_dict()))
+        if len(opt_name_product) != 1:
+            self.raise_named_exception("The optimization of the product structure failed.")
+            raise RuntimeError("Unreachable")
+        lowest_p_name, _ = self._get_propensity_names_within_range(
+            opt_name_product[0], self.systems, self.settings[self.propensity_key]["energy_range_to_optimize"]
+        )
+        if lowest_p_name is None:
+            self.raise_named_exception("No product optimization was successful.")
+            raise RuntimeError("Unreachable")
+        if lowest_p_name != opt_name_product[0]:
+            sys.stderr.write(f"Warning: Detected a lower energy spin multiplicity of "
+                             f"{self.get_multiplicity(self.get_system(lowest_p_name))} for the product.")
+            opt_name_product = [lowest_p_name]
+
+        if self.get_multiplicity(self.get_system(opt_name_reactant[0])) != \
+                self.get_multiplicity(self.get_system(opt_name_product[0])):
+            self.raise_named_exception("The optimized reactant and product have different spin multiplicities.")
+            raise RuntimeError("Unreachable")
+
         _, opt_r_graph, opt_r_charges, opt_r_multiplicities, opt_r_decision_list = \
             self.get_graph_charges_multiplicities(opt_name_reactant[0], products_structure.get_charge())
         _, opt_p_graph, _, _, _ = \
@@ -383,15 +385,18 @@ class ScineBsplineOptimization(ReactJob):
         """
         label = db.Label.MINIMUM_OPTIMIZED if ";" not in graph else db.Label.COMPLEX_OPTIMIZED
         new_structure = self.create_new_structure(self.systems[calculator_name], label)
+        if self.ref_structure is None:
+            self.raise_named_exception("The reference structure is not set.")
+            raise RuntimeError("Unreachable")  # for mypy
         self.transfer_properties(self.ref_structure, new_structure)
         bond_orders, self.systems = self.make_bond_orders_from_calc(self.systems, calculator_name)
-        self.store_energy(self.systems[calculator_name], new_structure)
+        self.store_energy(self.get_system(calculator_name), new_structure)
         self.store_bond_orders(bond_orders, new_structure)
         self.store_property(
             self._properties,
             "atomic_charges",
             "VectorProperty",
-            self.systems[calculator_name].get_results().atomic_charges,
+            self.get_system(calculator_name).get_results().atomic_charges,
             self._calculation.get_model(),
             self._calculation,
             new_structure,
@@ -409,9 +414,11 @@ class ScineBsplineOptimization(ReactJob):
         """
         Optimize molecular fragments and return their names, graphs, and energies.
         """
-        opt_fragment_names = self.optimize_structures(fragment_base_name, fragments,
-                                                      charges, multiplicities,
-                                                      deepcopy(settings_manager.calculator_settings.as_dict()))
+        opt_fragment_names, self.systems = (
+            self.optimize_structures(fragment_base_name, self.systems, fragments,
+                                     charges, multiplicities,
+                                     deepcopy(settings_manager.calculator_settings.as_dict()))
+        )
         opt_f_graphs = []
         fragment_energies = []
         for name, charge in zip(opt_fragment_names, charges):
@@ -422,7 +429,7 @@ class ScineBsplineOptimization(ReactJob):
                     + self.name
                 )
             opt_f_graphs.append(opt_f_graph)
-            fragment_energies.append(self.systems[name].get_results().energy)
+            fragment_energies.append(self.get_system(name).get_results().energy)
 
         return opt_fragment_names, opt_f_graphs, fragment_energies
 
@@ -453,8 +460,8 @@ class ScineBsplineOptimization(ReactJob):
         """
         Assert that the number of atoms did not change between the calculators.
         """
-        lhs_atoms = [self.systems[name].structure for name in lhs_names]
-        rhs_atoms = [self.systems[name].structure for name in rhs_names]
+        lhs_atoms = [self.get_system(name).structure for name in lhs_names]
+        rhs_atoms = [self.get_system(name).structure for name in rhs_names]
         lhs_counts = self.__get_elements_in_atom_collections(lhs_atoms)
         rhs_counts = self.__get_elements_in_atom_collections(rhs_atoms)
         print("Atom counts lhs", lhs_counts)
@@ -463,7 +470,7 @@ class ScineBsplineOptimization(ReactJob):
             raise RuntimeError("Error: Non stoichiometric elementary step detected. The structures are likely wrong.")
 
     @staticmethod
-    def __get_elements_in_atom_collections(atom_collections):
+    def __get_elements_in_atom_collections(atom_collections: List[utils.AtomCollection]) -> Dict[str, int]:
         """
         Builds a dictionary containing the element symbols and the number of their occurrence in a given atom
         collection.
@@ -496,8 +503,9 @@ class ScineBsplineOptimization(ReactJob):
         multies_one = []
         graphs_one = []
         for name in names_one:
-            charges_one.append(self.systems[name].settings[utils.settings_names.molecular_charge])
-            multies_one.append(self.systems[name].settings[utils.settings_names.spin_multiplicity])
+            system = self.get_system(name)
+            charges_one.append(system.settings[utils.settings_names.molecular_charge])
+            multies_one.append(system.settings[utils.settings_names.spin_multiplicity])
             graphs_one.append(self.make_graph_from_calc(self.systems, name)[0])
         graphs, charges, multiplicities = (
             list(start_val)

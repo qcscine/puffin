@@ -30,9 +30,9 @@ def _log(config: Configuration, message: str):
 
     Parameters
     ----------
-    config :: Configuration
+    config : Configuration
         The configuration of the puffin
-    message :: str
+    message : str
         The message that is padded
     """
     if config["daemon"]["log"]:
@@ -49,9 +49,9 @@ def slow_connect(manager, config: Configuration) -> None:
 
     Parameters
     ----------
-    manager :: scine_database.Manager
+    manager : scine_database.Manager
         The database manager/connection.
-    config :: scine_puffin.config.Configuration
+    config : scine_puffin.config.Configuration
         The current configuration of the Puffin.
     """
     import scine_database as db
@@ -83,7 +83,7 @@ def kill_daemon(config: Configuration) -> None:
 
     Parameters
     ----------
-    config :: scine_puffin.config.Configuration
+    config : scine_puffin.config.Configuration
         The current configuration of the Puffin.
     """
     # Remove stop file if present
@@ -122,9 +122,9 @@ def loop(config: Configuration, available_jobs: dict) -> None:
 
     Parameters
     ----------
-    config :: scine_puffin.config.Configuration
+    config : scine_puffin.config.Configuration
         The current configuration of the Puffin.
-    available_jobs :: dict
+    available_jobs : dict
         The dictionary of available jobs, given the current config
         and runtime environment.
     """
@@ -219,11 +219,11 @@ def _check_touch_of_pending_jobs(
 
     Parameters
     ----------
-    manager :: scine_database.Manager
+    manager : scine_database.Manager
         The database connection
-    calculations :: scine_database.Collection
+    calculations : scine_database.Collection
         The collection holding all calculations
-    reset_delta :: int
+    reset_delta : int
         The time difference after which a job is assumed
         to be dead. Time given in seconds.
     """
@@ -246,7 +246,7 @@ def check_setup(config: Configuration) -> Dict[str, str]:
 
     Parameters
     ----------
-    config :: scine_puffin.config.Configuration
+    config : scine_puffin.config.Configuration
         The current configuration of the Puffin.
     """
     scine_database = util.find_spec("scine_database")
@@ -336,14 +336,14 @@ def _loop_impl(
 
     Parameters
     ----------
-    config :: scine_puffin.config.Configuration
+    config : scine_puffin.config.Configuration
         The current configuration of the Puffin.
-    available_jobs :: dict
+    available_jobs : dict
         A dictionary of all jobs that are available to this Puffin.
-    JOB :: multiprocessing.Array
+    JOB : multiprocessing.Array
         Possibly a shared array of chars (string) to share the current jobs ID
         with external code. Default: ``None``
-    CURRENT_DB :: multiprocessing.Array
+    CURRENT_DB : multiprocessing.Array
         The name of the current database, used to sync the two threads in case
         of multi-database usage of a single Puffin.
     """

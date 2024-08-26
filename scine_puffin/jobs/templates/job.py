@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from functools import wraps
-from typing import Callable, List, Optional, Tuple
+from typing import Union, Callable, List, Optional, Tuple, Iterator, Any, TYPE_CHECKING, Type
+from typing_extensions import TypeGuard, TypeVar, ParamSpec, Concatenate
+
 import shutil
 import tarfile
 import os
@@ -14,13 +18,38 @@ import sys
 import ctypes
 import io
 import time
-import subprocess
 
+from scine_puffin.utilities.imports import module_exists, requires, MissingDependency
 from scine_puffin.config import Configuration
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 libc = ctypes.CDLL(None)
 c_stdout = ctypes.c_void_p.in_dll(libc, "stdout")
 c_stderr = ctypes.c_void_p.in_dll(libc, "stderr")
+
+T = TypeVar("T", bound='Job')
+P = ParamSpec("P")
+AnyReturnType = TypeVar("AnyReturnType")
+
+
+def is_configured(run: Callable[Concatenate[T, P], AnyReturnType]) \
+        -> Callable[Concatenate[T, P], AnyReturnType]:
+    """
+    A decorator to check if the job has been configured before running a method
+    """
+
+    @wraps(run)
+    def _impl(self: T, *args: P.args, **kwargs: P.kwargs) -> AnyReturnType:
+        if self.check_configuration(self):
+            return run(self, *args, **kwargs)
+        else:
+            raise RuntimeError("Job has not been configured properly")
+
+    return _impl
 
 
 def job_configuration_wrapper(run: Callable):
@@ -32,7 +61,7 @@ def job_configuration_wrapper(run: Callable):
     """
 
     @wraps(run)
-    def _impl(self, manager, calculation, config):
+    def _impl(self, manager: db.Manager, calculation: db.Calculation, config: Configuration):
         self.configure_run(manager, calculation, config)
         try:
             success = run(self, manager, calculation, config)
@@ -44,37 +73,35 @@ def job_configuration_wrapper(run: Callable):
             success = False
         if not success:
             # additional safety that every failed job gets also a failed status
-            import scine_database as db
-
             calculation.set_status(db.Status.FAILED)
         return success
 
     return _impl
 
 
-class Job:
+class Job(ABC):
     """
     A common interface for all jobs in/carried out by a Puffin
     """
 
-    def __init__(self):
-        self.work_dir = None
-        self.stdout_path = None
-        self.stderr_path = None
-        self.config = None
-        self._id = None
-        self._calculation = None
-        self._manager = None
-        self._calculations = None
-        self._compounds = None
-        self._elementary_steps = None
-        self._properties = None
-        self._reactions = None
-        self._structures = None
-        self._flasks = None
+    work_dir: str
+    stdout_path: str = "stdout"
+    stderr_path: str = "stderr"
+    config: Configuration
+    _id: db.ID
+    _calculation: db.Calculation
+    _manager: db.Manager
+    _calculations: db.Collection
+    _compounds: db.Collection
+    _elementary_steps: db.Collection
+    _properties: db.Collection
+    _reactions: db.Collection
+    _structures: db.Collection
+    _flasks: db.Collection
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
+    @abstractmethod
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
         """
         Runs the actual job.
         This function has to be implemented by any job that shall be added to
@@ -82,16 +109,17 @@ class Job:
 
         Parameters
         ----------
-        manager :: db.Manager (Scine::Database::Manager)
+        manager : db.Manager (Scine::Database::Manager)
             The manager/database to work on/with.
-        calculation :: db.Calculation (Scine::Database::Calculation)
+        calculation : db.Calculation (Scine::Database::Calculation)
             The calculation that triggered the execution of this job.
-        config :: scine_puffin.config.Configuration
+        config : scine_puffin.config.Configuration
             The configuration of Puffin.
         """
         raise NotImplementedError
 
     @staticmethod
+    @abstractmethod
     def required_programs() -> List[str]:
         """
         This function has to be implemented by any job that shall be added to
@@ -99,13 +127,56 @@ class Job:
 
         Returns
         -------
-        requirements :: List[str]
+        requirements : List[str]
             A list of names of programs/packages that are required for the
             execution of the job.
         """
         raise NotImplementedError
 
-    def prepare(self, job_dir: str, id) -> None:
+    @classmethod
+    def optional_settings_doc(cls) -> str:
+        """
+        Returns a docstring description of the available optional settings of the job.
+        To be implemented by child classes if applicable
+        """
+        return ""
+
+    @classmethod
+    def generated_data_docstring(cls) -> str:
+        """
+        Returns a docstring description of the generated data of the job.
+        """
+        return "**Generated Data**\n"
+
+    @staticmethod
+    def general_calculator_settings_docstring() -> str:
+        return """
+        Additionally, all settings that are recognized by the SCF program chosen.
+        are also available. These settings are not required to be prepended with
+        any flag.
+
+        Common examples are:
+
+        max_scf_iterations : int
+           The number of allowed SCF cycles until convergence.
+        """
+
+    @classmethod
+    def required_packages_docstring(cls) -> str:
+        required = cls.required_programs()
+        docs = "\n**Required Packages**\n"
+        if "database" in required:
+            docs += "  - SCINE: Database (present by default)\n"
+        if "molassembler" in required:
+            docs += "  - SCINE: Molassembler (present by default)\n"
+        if "readuct" in required:
+            docs += "  - SCINE: ReaDuct (present by default)\n"
+        if "utils" in required:
+            docs += "  - SCINE: Utils (present by default)\n"
+        docs += "  - A program implementing the SCINE Calculator interface, e.g. Sparrow\n"
+        return docs
+
+    def prepare(self, job_dir: str, id: db.ID) -> None:
         """
         Prepares the actual job.
         This function has to be implemented by any job that shall be added to
@@ -113,9 +184,9 @@ class Job:
 
         Parameters
         ----------
-        job_dir :: str
+        job_dir : str
             The path to the directory in which all jobs are executed.
-        id :: db.ID (Scine::Database::ID)
+        id : db.ID (Scine::Database::ID)
             The calculation that triggered the execution of this job.
         """
         self._id = id
@@ -130,11 +201,14 @@ class Job:
 
         Parameters
         ----------
-        archive :: str
+        archive : str
             The path to move the resulting tarball to.
         """
-        if not os.path.exists(self.work_dir):
+        if not self.work_dir or not os.path.exists(self.work_dir):
             sys.stderr.write(f"The job directory {self.work_dir} does not exist, cannot archive.\n")
+            return
+        if not self._id:
+            sys.stderr.write(f"The job {self.__class__.__name__} has no ID, cannot archive.\n")
             return
         basedir = os.path.dirname(self.work_dir)
         # Tar the folder
@@ -151,12 +225,13 @@ class Job:
         """
         Clears the directory in which the job was run.
         """
-        if not os.path.exists(self.work_dir):
+        if not self.work_dir or not os.path.exists(self.work_dir):
             sys.stderr.write(f"The job directory {self.work_dir} does not exist, cannot remove anything.\n")
             return
         shutil.rmtree(self.work_dir)
 
-    def verify_connection(self):
+    @is_configured
+    def verify_connection(self) -> None:
         """
         Verifies the connection to the database.
         Returns only if a connection is established, if it is not, the function
@@ -170,60 +245,59 @@ class Job:
         while not self._manager.is_connected():
             time.sleep(10)
 
+    @requires("database")
     def store_property(
         self,
-        properties,
+        properties: db.Collection,
         property_name: str,
         property_type: str,
-        data,
-        model,
-        calculation,
-        structure,
-        replace=True,
-    ) -> object:
+        data: Any,
+        model: db.Model,
+        calculation: db.Calculation,
+        structure: db.Structure,
+        replace: bool = True,
+    ) -> Optional[db.Property]:
         """
         Adds a single property into the database, connecting it with a given
         structure and calculation (it's results section) and also
 
         Parameters
         ----------
-        properties :: db.Collection (Scine::Database::Collection)
+        properties : db.Collection (Scine::Database::Collection)
             The collection housing all properties.
-        property_name :: str
+        property_name : str
             The name (key) of the new property, e.g. ``electronic_energy``.
-        property_type :: str
+        property_type : str
             The type of property to be added, e.g. ``NumberProperty``.
-        data :: object (According to 'property_type')
+        data : Any (According to 'property_type')
             The data to be stored in the property, the type of this object is
             dependent on the type of property requested. A ``NumberProperty``
             will require a ``float``, a ``VectorProperty`` will require a
             ``List[float]``, etc.
-        model :: db.Model (Scine::Database::Model)
+        model : db.Model (Scine::Database::Model)
             The model used in the calculation that resulted in this property.
-        calculation :: db.Calculation (Scine::Database::Calculation)
+        calculation : db.Calculation (Scine::Database::Calculation)
             The calculation that resulted in this property.
             The calculation has to be linked to its collection.
-        structure :: db.Structure (Scine::Database::Structure)
+        structure : db.Structure (Scine::Database::Structure)
             The structure for which the property is to be added. The properties
             field of the structure will receive an additional entry, or have
             an entry replaced, based on the options given to this function.
             The structure has to be linked to its collection.
-        replace :: bool
+        replace : bool
             If true, replaces an existing property (identical name and model)
             with the new one. This option is true by default.
             If false, doesnothing in the previous case, and returns ``None``
 
         Returns
         -------
-        property :: Derived of db.Property (Scine::Database::Property)
+        property : Derived of db.Property (Scine::Database::Property)
             The property, a derived class of db.Property, linked to the
             properties' collection, or ``None`` if no property was generated due
             to duplication.
         """
         existing = self.check_duplicate_property(structure, properties, property_name, model)
         if existing and replace:
-            import scine_database as db
-
             class_ = getattr(db, property_type)
             db_property = class_(existing)
             db_property.link(properties)
@@ -235,8 +309,6 @@ class Job:
         elif existing:
             return None
         else:
-            import scine_database as db
-
             class_ = getattr(db, property_type)
             db_property = class_()
             db_property.link(properties)
@@ -247,26 +319,28 @@ class Job:
             calculation.set_results(results)
         return db_property
 
-    def check_duplicate_property(self, structure, properties, property_name, model) -> object:
+    @staticmethod
+    def check_duplicate_property(structure: db.Structure, properties: db.Collection, property_name: str,
+                                 model: db.Model) -> Union[db.ID, bool]:
         """
         Checks for a property that is an exact match for the one queried here.
         Exact match meaning that key and model both are matches.
 
         Parameters
         ----------
-        properties :: db.Collection (Scine::Database::Collection)
+        properties : db.Collection (Scine::Database::Collection)
             The collection housing all properties.
-        property_name :: str
+        property_name : str
             The name (key) of the queried property, e.g. ``electronic_energy``.
-        model :: db.Model (Scine::Database::Model)
+        model : db.Model (Scine::Database::Model)
             The model used in the calculation that resulted in this property.
-        structure :: db.Structure (Scine::Database::Structure)
+        structure : db.Structure (Scine::Database::Structure)
             The structure to be checked in. The structure has to be linked to
             its collection.
 
         Returns
         -------
-        ID :: db.ID (Scine::Database::ID)
+        ID : db.ID (Scine::Database::ID)
             Returns ``False`` if there is no existing property like the one
             queried or the ID of the first duplicate.
         """
@@ -275,31 +349,18 @@ class Job:
             return hits[0]
         return False
 
-    def configure_run(self, manager, calculation, config: Configuration):
+    def configure_run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> None:
         """
         Configures a job for a given Calculation to do tasks in the run function
 
         Parameters
         ----------
-        manager :: db.Manager (Scine::Database::Manager)
+        manager : db.Manager (Scine::Database::Manager)
             The manager of the database holding all collections
-        calculation :: db.Calculation (Scine::Database::Calculation)
+        calculation : db.Calculation (Scine::Database::Calculation)
             The calculation to be performed
-        config :: Configuration
+        config : Configuration
             The configuration of the Puffin doing the job
-        """
-        self.get_collections(manager)
-        self.set_calculation(calculation)
-        self.config = config
-
-    def get_collections(self, manager) -> None:
-        """
-        Saves Scine Database collections as class variables
-
-        Parameters
-        ----------
-        manager :: db.Manager (Scine::Database::Manager)
-            The manager of the database holding all collections
         """
         self._manager = manager
         self._calculations = manager.get_collection("calculations")
@@ -309,20 +370,29 @@ class Job:
         self._reactions = manager.get_collection("reactions")
         self._structures = manager.get_collection("structures")
         self._flasks = manager.get_collection("flasks")
-
-    def set_calculation(self, calculation) -> None:
-        """
-        Sets the current Calculation for this job and ensures connection
-
-        Parameters
-        ----------
-        calculation :: db.Calculation (Scine::Database::Calculation)
-            The calculation to be carried out
-        """
         self._calculation = calculation
         if not self._calculation.has_link():
             self._calculation.link(self._calculations)
+        self.config = config
 
+    @classmethod
+    def check_configuration(cls: Type[T], instance: T) -> TypeGuard[T]:
+        return hasattr(instance, "work_dir") and \
+            hasattr(instance, "stdout_path") and \
+            hasattr(instance, "stderr_path") and \
+            hasattr(instance, "config") and \
+            hasattr(instance, "_id") and \
+            hasattr(instance, "_calculation") and \
+            hasattr(instance, "_manager") and \
+            hasattr(instance, "_calculations") and \
+            hasattr(instance, "_compounds") and \
+            hasattr(instance, "_elementary_steps") and \
+            hasattr(instance, "_properties") and \
+            hasattr(instance, "_reactions") and \
+            hasattr(instance, "_structures") and \
+            hasattr(instance, "_flasks")
+
+    @is_configured
     def capture_raw_output(self) -> Tuple[str, str]:
         """
         Tries to capture the raw output of the calculation context and save it in the raw_output field of the
@@ -351,22 +421,22 @@ class Job:
             return "", raw_err
         return raw_out, raw_err
 
+    @requires('database')
+    @is_configured
     def complete_job(self) -> None:
         """
         Saves the executing Puffin, changes status to db.Status.COMPLETE.
         """
-        import scine_database as db
-
         self.capture_raw_output()
         self._calculation.set_executor(self.config["daemon"]["uuid"])
         self._calculation.set_status(db.Status.COMPLETE)
 
+    @is_configured
+    @requires('database')
     def fail_job(self) -> None:
         """
         Saves the executing Puffin, changes status to db.Status.FAILED.
         """
-        import scine_database as db
-
         self._calculation.set_executor(self.config["daemon"]["uuid"])
         self._calculation.set_status(db.Status.FAILED)
         _, error = self.capture_raw_output()
@@ -404,68 +474,9 @@ class Job:
         return os.path.join(self.work_dir, "success")
 
 
-class TurbomoleJob(Job):
-    """
-    A common interface for all jobs in Puffin that use Turbomole.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.input_structure = "system.xyz"
-
-        env = os.environ.copy()
-
-        self.turboexe = ""
-        self.turboscripts = ""
-        self.smp_turboexe = ""
-
-        if "TURBODIR" in env.keys():
-            if env["TURBODIR"]:
-                if os.environ.get("PARA_ARCH") is not None:
-                    del os.environ["PARA_ARCH"]
-                if os.path.exists(os.path.join(env["TURBODIR"], "scripts", "sysname")):
-                    self.sysname = (
-                        subprocess.check_output(os.path.join(env["TURBODIR"], "scripts", "sysname"))
-                        .decode("utf-8", errors='replace')
-                        .rstrip()
-                    )
-                    self.sysname_parallel = self.sysname + "_smp"
-                    self.turboexe = os.path.join(env["TURBODIR"], "bin", self.sysname)
-                    self.smp_turboexe = os.path.join(env["TURBODIR"], "bin", self.sysname_parallel)
-                    self.turboscripts = os.path.join(env["TURBODIR"], "scripts")
-                else:
-                    raise RuntimeError("TURBODIR not assigned correctly. Check spelling or empty the env variable.")
-
-    def prepare_calculation(self, structure, calculation_settings, model, job):
-
-        import scine_utilities as utils
-        from scine_puffin.utilities.turbomole_helper import TurbomoleHelper
-
-        tm_helper = TurbomoleHelper()
-
-        # Write xyz file
-        utils.io.write(self.input_structure, structure.get_atoms())
-        # Write coord file
-        tm_helper.write_coord_file(calculation_settings)
-        # Check if settings are available
-        tm_helper.check_settings_availability(job, calculation_settings)
-        # Generate input file for preprocessing tool 'define'
-        tm_helper.prepare_define_session(structure, model, calculation_settings, job)
-        # Initialize via define
-        tm_helper.initialize(model, calculation_settings)
-
-    def run(self, manager, calculation, config: Configuration) -> bool:
-        """See Job.run()"""
-        raise NotImplementedError
-
-    @staticmethod
-    def required_programs() -> List[str]:
-        """See Job.required_programs()"""
-        raise NotImplementedError
-
-
 @contextmanager
-def calculation_context(job: Job, stdout_name="output", stderr_name="errors", debug: Optional[bool] = None):
+def calculation_context(job, stdout_name: str = "output", stderr_name: str = "errors",
+                        debug: Optional[bool] = None) -> Iterator:
     """
     A context manager for a types of calculations that are run externally and
     may fail, dump large amounts of files or do other nasty things.
@@ -482,15 +493,15 @@ def calculation_context(job: Job, stdout_name="output", stderr_name="errors", de
 
     Parameters
     ----------
-    job :: Job
+    job : Job
         The job holding the working directory and receiving the output and error paths
-    stdout_name :: str
+    stdout_name : str
         Name of the file that the stdout stream should be redirected to.
         The file will be generated in the given scratch directory.
-    stderr_name :: str
+    stderr_name : str
         Name of the file that the stderr stream should be redirected to.
         The file will be generated in the given scratch directory.
-    debug :: bool
+    debug : bool
         If not given, will be taken from Job Configuration (config['daemon']['mode'])
         If true, runs in debug mode, disabling all redirections.
 
@@ -601,7 +612,7 @@ class breakable(object):
     class Break(Exception):
         """Break out of the with statement"""
 
-    def __init__(self, value):
+    def __init__(self, value) -> None:
         self.value = value
 
     def __enter__(self):

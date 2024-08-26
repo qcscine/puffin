@@ -1,16 +1,25 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+from typing import TYPE_CHECKING, List
+
 from scine_puffin.config import Configuration
 from .templates.job import calculation_context, job_configuration_wrapper
 from .templates.scine_connectivity_job import ConnectivityJob
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class Graph(ConnectivityJob):
-    """
+    __doc__ = ("""
     A job generating the molassembler graph and decision lists of a structure.
 
     **Order Name**
@@ -20,51 +29,33 @@ class Graph(ConnectivityJob):
       Optional settings are read from the ``settings`` field, which is part of
       any ``Calculation`` stored in a SCINE Database.
       Possible settings for this job are:
+    """ + "\n"
+               + ConnectivityJob.optional_settings_doc() + "\n"
+               + ConnectivityJob.general_calculator_settings_docstring() + "\n"
+               + ConnectivityJob.generated_data_docstring() + "\n"
+               + """
+    If successful the following data will be generated and added to the
+    database:
 
-      add_based_on_distance_connectivity :: bool
-        If ``True``, the structure's connectivity is derived from interatomic
-        distances via the utils.BondDetector: The bond orders used for
-        interpretation are set to the maximum between those given in the
-        ``bond_orders`` property and 1.0, wherever the utils.BondDetector
-        detects a bond. (default: True)
-      sub_based_on_distance_connectivity :: bool
-        If ``True``, the structure's connectivity is derived from interatomic
-        distances via the utils.BondDetector: The bond orders used for
-        interpretation are removed, wherever the utils.BondDetector does not
-        detect a bond. (default: True)
-      enforce_bond_order_model :: bool
-        If ``True``, only processes ``bond_orders`` that were generated with
-        the specified model. If ``False``, eventually falls back to any ``bond_orders``
-        available for the structure. (default: True)
+    Properties
+      - None
 
-    **Required Packages**
-      - SCINE: Database (present by default)
-      - SCINE: molassembler (present by default)
-      - SCINE: Utils (present by default)
-
-    **Generated Data**
-      If successful the following data will be generated and added to the
-      database:
-
-      Properties
-        - None
-
-      Other
-        Graph representations of the structure will be added to the structures
-        ``graphs`` field. The added representations are: A representation of the
-        graph ``masm_cbor_graph``, and the decision representations of the existing
-        stereopermutators using a nearest neighbor fit ``masm_decision_list``
-        Any previous graph representations of the structure will be overwritten.
+    Other
+      Graph representations of the structure will be added to the structures
+      ``graphs`` field. The added representations are: A representation of the
+      graph ``masm_cbor_graph``, and the decision representations of the existing
+      stereopermutators using a nearest neighbor fit ``masm_decision_list``
+      Any previous graph representations of the structure will be overwritten.
     """
+               + ConnectivityJob.required_packages_docstring()
+               )
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.name = "Scine Graph Job"
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
-
-        import scine_database as db
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
         # preprocessing of structure
         structure = db.Structure(calculation.get_structures()[0], self._structures)
@@ -88,5 +79,5 @@ class Graph(ConnectivityJob):
         return self.postprocess_calculation_context()
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "molassembler", "utils"]

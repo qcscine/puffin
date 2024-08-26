@@ -4,6 +4,8 @@ Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Gr
 See LICENSE.txt for details.
 """
 
+from copy import deepcopy
+from multiprocessing import Pool, cpu_count
 from typing import Optional, Any, Tuple, List
 import numpy as np
 
@@ -20,16 +22,16 @@ class RMSKineticModelingSensitivityAnalysis:
     To ensure that we can use multiprocessing, we cannot work with any Julia objects in the main thread. Julia objects
     may only be constructed after starting the parallel loop.
 
-    Parameters:
-    -----------
-    rms_kinetic_model: RMSKineticModel
+    Parameters
+    ----------
+    rms_kinetic_model : RMSKineticModel
         The microkinetic model.
-    n_cores: int
+    n_cores : int
         Number of cores to run the sensitivity analysis on. Note that if n > 1, RMS must not have been instantiated
         before in the python main process because Julia runs into trouble otherwise.
-    sample_size: int
+    sample_size : int
         Number of samples for Morris (5 - 25) or Sobol ( > 500) analysis.
-    distribution_shape: str (default 'unif')
+    distribution_shape : str (default 'unif')
         Shape of the parameter distribution to be assumed. Options are uniform distribution between error bounds
         ('unif') and truncated normal distributions ('truncnorm'). The normal distributions is only truncated to
         ensure non-negative reaction barriers. The standard deviation for the normal distribution is taken as the
@@ -38,10 +40,11 @@ class RMSKineticModelingSensitivityAnalysis:
         parameter sampling if Morris sampling is used because it constructs discrete parameter levels within the
         distribution.
 
-    TODO: The number of level for Morris sampling should be an input argument.
+    TODO: The number of levels for the Morris sampling should be an input argument.
     """
+
     def __init__(self, rms_kinetic_model: RMSKineticModel, n_cores: int, sample_size: int,
-                 distribution_shape: str = 'unif'):
+                 distribution_shape: str = 'unif') -> None:
         self.rms_model = rms_kinetic_model
         self.n_cores = n_cores
         self.sample_size = sample_size
@@ -99,11 +102,12 @@ class RMSKineticModelingSensitivityAnalysis:
         """
         Calculate mean and variance of the outputs of the sensitivity analysis runs.
 
-        Return
-        ------
-        Returns a list of tuples (tuple[0] -> mean ; tuple[1] -> variance) of the different sensitivity analysis
-        outputs (these can be aggregate-wise maximum concentrations, fluxes or just concentrations at specific time
-        points).
+        Returns
+        -------
+        List[Tuple[np.ndarray, np.ndarray]]
+            Returns a list of tuples (tuple[0] -> mean ; tuple[1] -> variance) of the different sensitivity analysis
+            outputs (these can be aggregate-wise maximum concentrations, fluxes or just concentrations at specific time
+            points).
         """
         if self.get_analysis().results is None:
             raise RuntimeError("Run the sensitivity analysis first, please.")
@@ -121,16 +125,17 @@ class RMSKineticModelingSensitivityAnalysis:
         samples for each parameter and p is the number of parameters (number of reactions + number of aggregates).
         The number of samples (N) is typically between 5 and 25.
 
-        Return
-        ------
+        Returns
+        -------
         Returns the sensitivity measures for the maximum and final concentrations for each parameter as a dictionary.
 
         The measures are:
-        max_mu: Maximum value of the Morris sensitivity measure mu for the parameter and maximum/final concentrations.
-        max_mu_star: Maximum value of the Morris sensitivity measure mu* for the parameter and maximum/final
-        concentrations.
-        max_sigma: Maximum value of the Morris sensitivity measure sigma for the parameter and maximum/final
-        concentrations.
+            max_mu: Maximum value of the Morris sensitivity measure mu for the parameter and maximum/final
+            concentrations.
+            max_mu_star: Maximum value of the Morris sensitivity measure mu* for the parameter and maximum/final
+            concentrations.
+            max_sigma: Maximum value of the Morris sensitivity measure sigma for the parameter and maximum/final
+            concentrations.
         """
         problem = self._define_sampling_problem()
         # pylint: disable=no-member
@@ -192,7 +197,6 @@ class RMSKineticModelingSensitivityAnalysis:
         nprocs : int,
             The number of processes.
         """
-        from multiprocessing import Pool, cpu_count
         if problem._samples is None:
             raise RuntimeError("Sampling not yet conducted")
 
@@ -295,7 +299,6 @@ class RMSKineticModelingSensitivityAnalysis:
         Getter for the local sensitivity samples (parameter combinations). Parameters are distorted by their error
         bounds one-at-a-time from the baseline.
         """
-        from copy import deepcopy
         parameter_bounds = self.get_parameter_bounds()
         f2r_mapping = self.get_reduced_parameter_mapping()
         full_parameters = self.rms_model.get_all_parameters()
@@ -327,25 +330,23 @@ class RMSKineticModelingSensitivityAnalysis:
 
         Parameters
         ----------
-        vertex_fluxes :: np.ndarray
+        vertex_fluxes : np.ndarray
             The vertex fluxes of the baseline model (the model with all parameters as their default).
-        edge_fluxes :: np.ndarray
+        edge_fluxes : np.ndarray
             The edge fluxes of the baseline model.
-        vertex_threshold :: float
+        vertex_threshold : float
             Vertex fluxes over this values are considered high and reduced to flux_replace. This should remove
             absolutely large but unimportant changes of the fluxes.
-        edge_threshold :: float
+        edge_threshold : float
             Edge fluxes over this values are considered high and reduced to flux_replace. This should remove absolutely
             large but unimportant changes of the fluxes.
-        flux_replace :: float
+        flux_replace : float
             The flux replacement value.
-        ref_max :: np.ndarray
+        ref_max : np.ndarray
             The maximum concentrations of the baseline model.
-        ref_final :: np.ndarray
+        ref_final : np.ndarray
             The final concentrations of the baseline model.
         """
-        from multiprocessing import Pool
-        from copy import deepcopy
         self.set_prescreening_condition(vertex_fluxes, edge_fluxes, vertex_threshold, edge_threshold)
         samples, parameter_indices = self.get_local_sensitivity_samples()
         n_samples = samples.shape[0]
@@ -447,15 +448,17 @@ class RMSKineticModelingSensitivityAnalysis:
         """
         Parameters
         ----------
-        metric :: np.ndarray
+        metric : np.ndarray
             The metric in the reduced parameter set.
-        mapping :: List[Tuple[int, int]]
+        mapping : List[Tuple[int, int]]
             Full parameter index - reduced parameter index tuples.
-        n_total_params :: int
+        n_total_params : int
             Total number of parameters.
+
         Returns
         -------
-        The metric in the full parameter dimensions.
+        np.ndarray
+            The metric in the full parameter dimensions.
         """
         assert metric.shape == (len(mapping),)
         full_metric = np.zeros(n_total_params)
@@ -471,14 +474,18 @@ class RMSKineticModelingSensitivityAnalysis:
 
         Parameters
         ----------
-        update :: np.ndarray
+        update : np.ndarray
             The new parameter values.
-        full_set :: np.ndarray
+        full_set : np.ndarray
             The full set of parameters.
-        mapping :: List[Tuple[int, int]]
+        mapping : List[Tuple[int, int]]
             The indices of the update values in the full parameter set.
+
+        Returns
+        -------
+        np.ndarray
+            The updated full parameter set.
         """
-        from copy import deepcopy
         assert len(update) == len(mapping)
         params = deepcopy(full_set)
         for full_index, reduced_index in mapping:
@@ -525,7 +532,7 @@ class RMSKineticModelingSensitivityAnalysis:
 
         Parameters
         ----------
-        params_set :: np.ndarray
+        params_set : np.ndarray
             An array containing a set of parameters for the run.
         """
         import os

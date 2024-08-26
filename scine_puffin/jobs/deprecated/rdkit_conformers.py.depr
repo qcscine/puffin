@@ -6,9 +6,20 @@ See LICENSE.txt for details.
 
 import os
 import sys
+from typing import Any, TYPE_CHECKING
+
 import scipy.sparse
+
 from scine_puffin.config import Configuration
 from ..templates.job import Job, calculation_context, job_configuration_wrapper
+from scine_puffin.utilities.imports import module_exists
+
+if module_exists("scine_database"):
+    import scine_database as db
+elif TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = Any
 
 try:
     from rdkit import Chem
@@ -31,18 +42,18 @@ class RdkitConformers(Job):
       any ``Calculation`` stored in a SCINE Database.
       Possible settings for this job are:
 
-      numConfs :: int
+      numConfs : int
          The number of conformers to be generated. By default it is 100.
-      maxAttempts :: int
+      maxAttempts : int
          The maximum number of trials that will be undertaken in order to
          generate conformers.
          By default it equals numConfs.
-      pruneRmsThresh :: float
+      pruneRmsThresh : float
          If set, the heavy atom RMSD is calculated and the generated conformers
          are pruned such that only those are kept that are at least
          pruneRmsThresh away from all priorly retained conformations.
          By default there is no pruning.
-      randomSeed :: int
+      randomSeed : int
          Seed for the random number generator employed during conformer
          generation. If set to -1 (default), the random number generator is not
          seeded.
@@ -70,11 +81,11 @@ class RdkitConformers(Job):
         super().__init__()
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "utils", "rdkit"]
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
         import scine_database as db
 

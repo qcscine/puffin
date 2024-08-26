@@ -1,14 +1,26 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 import os
-from typing import Any, Tuple
+from typing import Any, Tuple, TYPE_CHECKING, List
 from scine_puffin.config import Configuration
-from .templates.job import calculation_context, TurbomoleJob, job_configuration_wrapper
+from .templates.job import calculation_context, job_configuration_wrapper
+from .templates.turbomole_job import TurbomoleJob
 from ..utilities.turbomole_helper import TurbomoleHelper
+from scine_puffin.utilities.imports import module_exists, requires, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    utils = MissingDependency("scine_database")
 
 
 class TurbomoleGeometryOptimization(TurbomoleJob):
@@ -27,35 +39,35 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
       any ``Calculation`` stored in a SCINE Database.
       Possible settings for this job are:
 
-      cartesian_constraints :: List[int]
+      cartesian_constraints : List[int]
           A list of atom indices of the atoms which positions will be
           constrained during the optimization.
-      max_scf_iterations :: int
+      max_scf_iterations : int
           The number of allowed SCF cycles until convergence. Default value is 30.
-      transform_coordinates :: bool
+      transform_coordinates : bool
            Switch to transform the input coordinates from redundant internal
            to cartesian coordinates. Setting this value to True and hence performing
            the calculation in Cartesian coordinates is helpful in rare occasions
            where the calculation with redundant internal coordinates fails.
            The optimization will take more time but is more likely to end
            successfully. The default is False.
-      convergence_max_iterations :: int
+      convergence_max_iterations : int
           The maximum number of geometry optimization cycles.
-      scf_damping :: bool
+      scf_damping : bool
           Increases damping during the SCF by modifying the $scfdamp parameter in the control file.
           The default is False.
-      scf_orbitalshift :: float
+      scf_orbitalshift : float
           Shifts virtual orbital energies upwards. Default value is 0.1.
-      convergence_delta_value :: int
+      convergence_delta_value : int
           The convergence criterion for the electronic energy difference between
           two steps. The default value is 1E-6.
-      calculate_loewdin_charges :: bool
+      calculate_loewdin_charges : bool
           Calculates the Loewdin partial charges. The default is False.
-      self_consistence_criterion :: float
+      self_consistence_criterion : float
           The self consistence criterion corresponding to the maximum
           energy change between two SCF cycles resulting in convergence.
           Default value ist 1E-6.
-      spin_mode :: string
+      spin_mode : string
           Sets the spin mode. If no spin mode is set, Turbomole's default for the corresponding
           system is chosen. Options are: restricted, unrestricted.
 
@@ -74,7 +86,7 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
         The ``electronic_energy`` associated with the new structure and ``atomic_charges`` for all atoms, if requested.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.input_structure = "system.xyz"
         self.converged_file = "GEO_OPT_CONVERGED"
@@ -85,7 +97,7 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
         self.tm_helper = TurbomoleHelper()
 
     # Executes structure optimization using the jobex script
-    def execute_optimization(self, settings: dict, job):
+    def execute_optimization(self, settings: utils.ValueCollection, job: db.Job) -> None:
 
         os.environ["PARA_ARCH"] = "SMP"
         os.environ["PARNODES"] = str(job.cores)
@@ -107,10 +119,11 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
         if not os.path.exists(self.converged_file):
             raise RuntimeError("Structure optimization failed.")
 
-    # Parse energy and extract output structure from coord file
+    @requires("utilities")
     def parse_results(self) -> Tuple[Any, float]:
-
-        import scine_utilities as utils
+        """
+        Parse energy and extract output structure from coord file
+        """
 
         successful = False
 
@@ -136,9 +149,7 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
             raise RuntimeError
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
-
-        import scine_database as db
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
         # Gather all required collections
         structures = manager.get_collection("structures")
@@ -161,8 +172,7 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
         job = calculation.get_job()
 
         # New label
-        # TODO: These labels are not necessarily correct; during the optimization, a
-        # complex coul be created
+        # TODO: These labels are not necessarily correct; during the optimization, a complex could be created
         label = structure.get_label()
         if label == db.Label.MINIMUM_GUESS or label == db.Label.MINIMUM_OPTIMIZED:
             new_label = db.Label.MINIMUM_OPTIMIZED
@@ -281,5 +291,5 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
         return True
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "utils", "turbomole"]

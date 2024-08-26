@@ -1,15 +1,29 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 import os
+from typing import TYPE_CHECKING, List, Dict, Optional, Tuple
+
 from scine_puffin.config import Configuration
-from .templates.job import Job, calculation_context, job_configuration_wrapper
+from .templates.job import calculation_context, job_configuration_wrapper
+from .templates.scine_job import ScineJob
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    utils = MissingDependency("scine_utilities")
 
 
-class SwooseQmmmForces(Job):
+class SwooseQmmmForces(ScineJob):
     """
     A job calculating the forces for a given structure with the QM/MM method
     provided by the Scine Swoose Module.
@@ -27,7 +41,7 @@ class SwooseQmmmForces(Job):
 
       Common examples are:
 
-      max_scf_iterations :: int
+      max_scf_iterations : int
          The number of allowed SCF cycles until convergence.
 
     **Required Packages**
@@ -45,28 +59,41 @@ class SwooseQmmmForces(Job):
         The ``atomic_forces`` associated with the given structure.
     """
 
-    def write_parameter_and_connectivity_file(self, parameter_file: str, connectivity_file: str,
-                                              settings, structure, properties):
-        """
-        This function needs to be called inside the calculation context, because it writes files to
-        strange places otherwise.
-        """
-
-        import scine_database as db
+    @staticmethod
+    def get_qm_atoms(properties: db.Collection, structure: db.Structure) -> List[int]:
         try:
-            parameters = db.StringProperty(structure.get_property('sfam_parameters'))
+            qm_atoms = db.VectorProperty(structure.get_property('qm_atoms'))
+        except RuntimeError as e:
+            raise RuntimeError('QM atoms are not available as a property of the QM/MM structure.') from e
+        qm_atoms.link(properties)
+        return [int(i) for i in qm_atoms.get_data()]
+
+    @staticmethod
+    def write_partial_charge_file(charge_file_name: str, properties: db.Collection, structure: db.Structure) -> None:
+        try:
+            charges = db.VectorProperty(structure.get_property('atomic_charges'))
+        except RuntimeError as e:
+            raise RuntimeError('Atomic charges are not available as a property of the QM/MM structure.') from e
+        charges.link(properties)
+        charge_file_str = ""
+        for charge in charges.get_data():
+            charge_file_str += str(charge) + "\n"
+        with open(charge_file_name, 'w') as p_file:
+            p_file.write(charge_file_str)
+
+    @staticmethod
+    def write_connectivity_file(connectivity_file_name: str, properties: db.Collection,
+                                structure: db.Structure) -> None:
+        try:
             bond_orders = db.SparseMatrixProperty(structure.get_property('bond_orders'))
         except RuntimeError as e:
-            raise RuntimeError('Parameters or bond orders are missing as properties of the structure.') from e
-        parameters.link(properties)
+            raise RuntimeError('Bond orders are missing as properties of the structure during QM/MM.') from e
         bond_orders.link(properties)
-        n_atoms = len(structure.get_atoms())
         bo_matrix = bond_orders.get_data().toarray()
+        n_atoms = len(structure.get_atoms())
         if bo_matrix.shape != (n_atoms, n_atoms):
             raise RuntimeError('The dimensions of the provided bond orders are incompatible with the structure.')
-        with open(parameter_file, 'w') as p_file:
-            p_file.write(parameters.get_data())
-        with open(connectivity_file, 'w') as c_file:
+        with open(connectivity_file_name, 'w') as c_file:
             for i in range(n_atoms):
                 neighbors = ''
                 for j in range(n_atoms):
@@ -74,10 +101,32 @@ class SwooseQmmmForces(Job):
                         continue
                     neighbors += str(j) + ' '
                 c_file.write(neighbors + '\n')
+
+    @staticmethod
+    def write_parameter_file(parameter_file_name: str, properties: db.Collection, structure: db.Structure) -> None:
+        try:
+            parameters = db.StringProperty(structure.get_property('sfam_parameters'))
+        except RuntimeError as e:
+            raise RuntimeError('SFAM-parameters are missing as properties of the structure in QM/MM.') from e
+        parameters.link(properties)
+        with open(parameter_file_name, 'w') as p_file:
+            p_file.write(parameters.get_data())
+
+    @staticmethod
+    def write_parameter_and_connectivity_file(parameter_file: str, connectivity_file: str,
+                                              settings: utils.ValueCollection, structure: db.Structure,
+                                              properties: db.Collection) -> utils.ValueCollection:
+        """
+        This function needs to be called inside the calculation context, because it writes files to
+        strange places otherwise.
+        """
+        SwooseQmmmForces.write_connectivity_file(connectivity_file, properties, structure)
+        SwooseQmmmForces.write_parameter_file(parameter_file, properties, structure)
         settings.update({'mm_parameter_file': parameter_file, 'mm_connectivity_file': connectivity_file})
         return settings
 
-    def parse_energy(self, output: str):
+    @staticmethod
+    def parse_energy(output: str) -> Optional[float]:
         try:
             lines = output.split('\n')
             for line in lines:
@@ -88,8 +137,8 @@ class SwooseQmmmForces(Job):
         except (IndexError, ValueError):
             return None
 
-    def parse_forces(self, output: str, n_atoms: int):
-        import scine_utilities as utils
+    @staticmethod
+    def parse_forces(output: str, n_atoms: int) -> Optional[List[List[float]]]:
         try:
             lines = output.split('\n')
             for i, line in enumerate(lines):
@@ -103,9 +152,8 @@ class SwooseQmmmForces(Job):
         except (IndexError, ValueError):
             return None
 
-    def process_output(self, calculation, atoms):
-        import scine_database as db
-
+    def process_output(self, calculation: db.Calculation, atoms: utils.AtomCollection) \
+            -> Tuple[float, List[List[float]]]:
         # Capture raw output and parse the results from it
         stdout_path = os.path.join(self.work_dir, 'output')
         stderr_path = os.path.join(self.work_dir, 'errors')
@@ -121,7 +169,8 @@ class SwooseQmmmForces(Job):
         # Check whether everything worked
         if energy is None or forces is None:
             calculation.set_status(db.Status.FAILED)
-            raise RuntimeError("Something went wrong while parsing energies or forces.")
+            self.raise_named_exception("Something went wrong while parsing energies or forces.")
+            raise RuntimeError  # linter only
 
         dimension_is_correct = len(forces) == len(atoms)
         for force in forces:
@@ -131,14 +180,20 @@ class SwooseQmmmForces(Job):
 
         if not dimension_is_correct:
             calculation.set_status(db.Status.FAILED)
-            raise RuntimeError("The obtained forces have wrong dimension.")
+            self.raise_named_exception("The obtained forces have wrong dimension.")
+            raise RuntimeError  # linter only
 
         return energy, forces
 
-    def manage_settings(self, settings: dict, job, resources):
-        import scine_utilities as utils
+    def manage_settings(self, settings: utils.ValueCollection, job: db.Job, resources: Dict) -> None:
         program = settings['qm_module']
+        if not isinstance(program, str):
+            self.raise_named_exception('The QM module is not a string.')
+            raise RuntimeError('Unreachable')  # for mypy
         method_family = 'dft' if program.lower() == 'orca' or program.lower() == 'turbomole' else settings['qm_model']
+        if not isinstance(method_family, str):
+            self.raise_named_exception('The QM model is not a string.')
+            raise RuntimeError('Unreachable')
         available_qm_settings = utils.core.get_available_settings(method_family, program)
         if job.cores > 1 and 'external_program_nprocs' in available_qm_settings:
             settings['external_program_nprocs'] = job.cores
@@ -146,11 +201,8 @@ class SwooseQmmmForces(Job):
             settings['external_program_memory'] = int(resources['memory'] * 1024)
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
-        import scine_database as db
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
         import scine_swoose as swoose
-        import scine_utilities as utils
-
         # Gather all required collections
         structures = manager.get_collection('structures')
         calculations = manager.get_collection('calculations')
@@ -201,5 +253,5 @@ class SwooseQmmmForces(Job):
         return True
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ['database', 'utils', 'swoose']

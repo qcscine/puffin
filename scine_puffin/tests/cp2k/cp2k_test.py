@@ -14,7 +14,7 @@ from ..testcases import skip_without
 
 
 class Cp2kTests(unittest.TestCase):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super(Cp2kTests, self).__init__(*args, **kwargs)
         self.resources_directory = os.path.join(pathlib.Path(__file__).parent.resolve(), "files")
 

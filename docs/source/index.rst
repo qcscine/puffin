@@ -15,4 +15,5 @@ Puffin
    programs
    jobs
    api
+   utilities
    changelog

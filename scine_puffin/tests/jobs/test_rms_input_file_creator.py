@@ -1,11 +1,12 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+from typing import TYPE_CHECKING
 import os
-
-import scine_database as db
 
 from ..testcases import (
     JobTestCase,
@@ -14,9 +15,18 @@ from ..db_setup import (
     add_compound_and_structure,
     add_reaction,
 )
+from scine_puffin.tests.testcases import skip_without
+
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class RMSInputFileCreatorTest(JobTestCase):
+
+    @skip_without('utilities')
     def test_phase_entry(self):
         """
         Idea of the test: Check if the created dictionaries have the expected format.
@@ -34,7 +44,7 @@ class RMSInputFileCreatorTest(JobTestCase):
                  'polys': [{
                      'Tmax': 5000.0,
                      'Tmin': 1.0,
-                     'coefs': [0.0, 0.0, 0.0, 0.0, 0.0, 3.0/r, 0.0/r],
+                     'coefs': [0.0, 0.0, 0.0, 0.0, 0.0, 3.0 / r, 0.0 / r],
                      'type': 'NASApolynomial'}],
                  'type': 'NASA'},
              'type': 'Species'},
@@ -43,7 +53,7 @@ class RMSInputFileCreatorTest(JobTestCase):
              'thermo': {
                  'polys': [{'Tmax': 5000.0,
                             'Tmin': 1.0,
-                            'coefs': [0.0, 0.0, 0.0, 0.0, 0.0, 2.0/r, 1.0/r],
+                            'coefs': [0.0, 0.0, 0.0, 0.0, 0.0, 2.0 / r, 1.0 / r],
                             'type': 'NASApolynomial'}],
                  'type': 'NASA'}, 'type': 'Species'},
             {'name': 'Some-Solvent',
@@ -57,6 +67,7 @@ class RMSInputFileCreatorTest(JobTestCase):
             'name': 'phase'}]
         assert reference == phase_list
 
+    @skip_without('database')
     def test_create_rms_reaction_entry(self):
         """
         Idea of the test: Check if the created dictionaries have the expected format.
@@ -90,6 +101,7 @@ class RMSInputFileCreatorTest(JobTestCase):
             'type': 'ElementaryReaction'}]
         assert reaction_list == reference
 
+    @skip_without('database')
     def test_create_rms_yml_file(self):
         """
         Idea of the test: Check if the rms yaml input file can be created without problems.

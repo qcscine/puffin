@@ -26,13 +26,6 @@ Module: jobloop
 .. automodule:: scine_puffin.jobloop
    :members:
 
-Module: jobs.templates.job
---------------------------
-
-.. automodule:: scine_puffin.jobs.templates.job
-   :members:
-
-
 Module: programs.program
 ------------------------
 

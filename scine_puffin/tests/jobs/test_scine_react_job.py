@@ -1,14 +1,38 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 # -*- coding: utf-8 -*-
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
-import numpy as np
+
+from typing import TYPE_CHECKING, List
 import unittest
 
 
-class ScineReactJobTest(unittest.TestCase):
+import os
+import numpy as np
+
+from scine_puffin.config import Configuration
+from scine_puffin.jobs.templates.job import calculation_context
+from scine_puffin.jobs.templates.scine_react_job import ReactJob
+from scine_puffin.utilities.imports import module_exists
+from scine_puffin.tests.testcases import skip_without, JobTestCase
+
+from ..db_setup import add_calculation, add_structure
+from ..resources import resource_path
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+
+
+class _Dummy(ReactJob):
+
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
+        return True
+
+
+class ScineReactTest(unittest.TestCase):
 
     def _split_atoms(self, atoms, compound_map):
         import scine_utilities as utils
@@ -23,18 +47,16 @@ class ScineReactJobTest(unittest.TestCase):
         return split_structures
 
     def test_custom_round(self):
-        from scine_puffin.jobs.templates.scine_react_job import ReactJob
-        react_job = ReactJob()
-        assert (react_job._custom_round(2.45) == 2.0)
-        assert (react_job._custom_round(2.45, 0.4) == 3.0)
-        assert (react_job._custom_round(-2.45) == -2.0)
-        assert (react_job._custom_round(-2.45, 0.45) == -3.0)
-        assert (react_job._custom_round(-2.45, 0.46) == -2.0)
+        react_job = _Dummy()
+        assert (react_job._custom_round(2.45) == (2.0, False))
+        assert (react_job._custom_round(2.45, 0.4) == (3.0, True))
+        assert (react_job._custom_round(-2.45) == (-2.0, False))
+        assert (react_job._custom_round(-2.45, 0.45) == (-3.0, True))
+        assert (react_job._custom_round(-2.45, 0.46) == (-2.0, False))
 
     def test_distribute_charge(self):
         # import Job
-        from scine_puffin.jobs.templates.scine_react_job import ReactJob
-        react_job = ReactJob()
+        react_job = _Dummy()
         assert (react_job._distribute_charge(0, [-1, 0], [-0.42, 0.2]) == [0, 0])  # Remove electron
         assert (react_job._distribute_charge(0, [-1, 1], [-0.42, 0.43]) == [-1, 1])  # Pass without change
         assert (react_job._distribute_charge(1, [-1, 1], [-0.42, 0.43]) == [0, 1])  # Remove electron
@@ -53,9 +75,9 @@ class ScineReactJobTest(unittest.TestCase):
         assert (react_job._distribute_charge(-2, [-1, 0, 0, 0],
                 [-1.3, 0.05, 0.1, 0.45]) == [-2, 0, 0, 0])  # Add electron at 0
 
+    @skip_without("utilities")
     def test_two_molecules_in_complex(self):
         import scine_utilities as utils
-        from scine_puffin.jobs.templates.scine_react_job import ReactJob
         # Load test case
         total_charge = 0
         positions = [[-2.091417412302329, -1.404388718237768, 0.6029258660694673, ],
@@ -87,7 +109,7 @@ class ScineReactJobTest(unittest.TestCase):
         atoms = utils.AtomCollection(elements, positions)
         split_structures = self._split_atoms(atoms, compound_map)
 
-        react_job = ReactJob()
+        react_job = _Dummy()
         react_job.settings['sp']['expect_charge_separation'] = True
         react_job.settings['sp']['charge_separation_threshold'] = 0.6
         # Test: no charge assigned
@@ -106,9 +128,9 @@ class ScineReactJobTest(unittest.TestCase):
         for i in range(len(r2)):
             self.assertAlmostEqual(r2[i], ref_r2[i], delta=1e-6)
 
+    @skip_without("utilities")
     def test_three_molecules_in_complex(self):
         import scine_utilities as utils
-        from scine_puffin.jobs.templates.scine_react_job import ReactJob
         # Load test case
         total_charge = 0
 
@@ -145,9 +167,9 @@ class ScineReactJobTest(unittest.TestCase):
         atoms = utils.AtomCollection(elements, positions)
         split_structures = self._split_atoms(atoms, compound_map)
 
-        react_job = ReactJob()
+        react_job = _Dummy()
         react_job.settings['sp']['expect_charge_separation'] = True
-        react_job.settings['sp']['charge_separation_threshold'] = 0.4
+        react_job.settings['sp']['charge_separation_threshold'] = 0.6
         # Test: no charge assigned
         c, e, r = react_job._integrate_charges(compound_map, partial_charges, split_structures, total_charge)
         assert (c == [0, 0, 0])
@@ -156,7 +178,7 @@ class ScineReactJobTest(unittest.TestCase):
         for i in range(len(r)):
             self.assertAlmostEqual(r[i], ref_r[i], delta=1e-6)
 
-        react_job.settings['sp']['charge_separation_threshold'] = 0.3
+        react_job.settings['sp']['charge_separation_threshold'] = 0.5
         # Test: charge assigend
         c2, e2, r2 = react_job._integrate_charges(compound_map, partial_charges, split_structures, total_charge)
         assert (c2 == [1, 0, -1])
@@ -164,3 +186,145 @@ class ScineReactJobTest(unittest.TestCase):
         ref_r2 = [-0.69547, 0.2727, 0.42277]
         for i in range(len(r2)):
             self.assertAlmostEqual(r2[i], ref_r2[i], delta=1e-6)
+
+
+class _DummyJob(ReactJob):
+
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
+        return True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.name = "Scine Test React Job"
+        self.exploration_key = "nt"
+        opt_defaults = {
+            "convergence_max_iterations": 500,
+        }
+        self.settings = {
+            **self.settings,
+            self.opt_key: opt_defaults
+        }
+
+        self.settings[self.propensity_key]['check'] = 1
+        self.settings[self.single_point_key]['expect_charge_separation'] = True
+        self.settings[self.single_point_key]['charge_separation_threshold'] = 0.5
+
+    @staticmethod
+    def required_programs() -> List[str]:
+        return ["database", "readuct", "utils"]
+
+
+class ScineReactJobTest(JobTestCase):
+
+    @skip_without("utilities", "readuct", "xtb_wrapper")
+    def test_analyze_side_reject_exhaustive_product_decomposition(self):
+        import scine_utilities as utils
+
+        # # # Load system into calculator
+        xyz_name = os.path.join(resource_path(), "iodine_in_water.xyz")
+        test_model_method = "gfn2"
+        calculator_settings = utils.ValueCollection({
+            'program': 'xtb',
+            'method': test_model_method,
+            'spin_multiplicity': 1,
+            'molecular_charge': 0,
+            'spin_mode': 'restricted_open_shell',
+            'self_consistence_criterion': 1e-07,
+            'electronic_temperature': 300.0,
+            'max_scf_iterations': 100,
+            'solvent': 'water',
+            'solvation': 'gbsa',
+        })
+        test_calc = utils.core.load_system_into_calculator(
+            xyz_name,
+            test_model_method,
+            **calculator_settings)
+
+        test_model = db.Model(test_model_method, test_model_method, "")
+        test_model.solvation = "gbsa"
+        test_model.solvent = "water"
+
+        dummy_structure = add_structure(self.manager, xyz_name, db.Label.MINIMUM_OPTIMIZED, 0, 1, test_model)
+        dummy_calculation = add_calculation(self.manager, model=test_model, job=db.Job("dummy_test"),
+                                            structures=[dummy_structure.id()])
+
+        config = self.get_configuration()
+        react_job = _DummyJob()
+        react_job.configure_run(self.manager, dummy_calculation, config)
+        react_job.prepare(config["daemon"]["job_dir"], dummy_calculation.id())
+        react_job.systems["test_irc"] = test_calc
+
+        react_job.settings[react_job.opt_key]['geoopt_coordinate_system'] = "cartesianWithoutRotTrans"
+
+        with calculation_context(react_job):
+            (
+                test_graph,
+                test_charges,
+                test_decision_lists,
+                test_names
+            ) = react_job.analyze_side("test_irc", 0, "test_forward", calculator_settings)
+
+        assert test_graph is None
+        assert test_charges is None
+        assert test_decision_lists is None
+        assert test_names is None
+
+    @skip_without("utilities", "readuct", "molassembler", "xtb_wrapper")
+    def test_analyze_side_allow_exhaustive_product_decomposition(self):
+        import scine_utilities as utils
+        import scine_molassembler as masm
+
+        # # # Load system into calculator
+        xyz_name = os.path.join(resource_path(), "iodine_in_water.xyz")
+        test_model_method = "gfn2"
+        calculator_settings = utils.ValueCollection({
+            'program': 'xtb',
+            'method': test_model_method,
+            'spin_multiplicity': 1,
+            'molecular_charge': 0,
+            'spin_mode': 'restricted_open_shell',
+            'self_consistence_criterion': 1e-07,
+            'electronic_temperature': 300.0,
+            'max_scf_iterations': 100,
+            'solvent': 'water',
+            'solvation': 'gbsa',
+        })
+        test_calc = utils.core.load_system_into_calculator(
+            xyz_name,
+            test_model_method,
+            **calculator_settings)
+
+        test_model = db.Model(test_model_method, test_model_method, "")
+        test_model.solvation = "gbsa"
+        test_model.solvent = "water"
+
+        dummy_structure = add_structure(self.manager, xyz_name, db.Label.MINIMUM_OPTIMIZED, 0, 1, test_model)
+        dummy_calculation = add_calculation(self.manager, model=test_model, job=db.Job("dummy_test"),
+                                            structures=[dummy_structure.id()])
+
+        config = self.get_configuration()
+        react_job = _DummyJob()
+        react_job.configure_run(self.manager, dummy_calculation, config)
+        react_job.prepare(config["daemon"]["job_dir"], dummy_calculation.id())
+        react_job.systems["test_irc"] = test_calc
+
+        react_job.settings[react_job.opt_key]['geoopt_coordinate_system'] = "cartesianWithoutRotTrans"
+        react_job.settings[react_job.job_key]["allow_exhaustive_product_decomposition"] = True
+
+        with calculation_context(react_job):
+            (
+                test_graph,
+                test_charges,
+                test_decision_lists,
+                test_names
+            ) = react_job.analyze_side("test_irc", 0, "test_forward", calculator_settings)
+
+        assert len(test_names) == 33  # 32 water molecules + 1 iodine
+        assert len(set(test_names)) == 2  # 2 type of molecules
+        assert len(test_charges) == 33
+        assert len(test_decision_lists) == 33
+        ref_graph_1 = "o2FjD2FnomFFgYMAAQBhWoIZP7UZP7VhdoMCAAE="  # Iodine
+        ref_graph_2 = "pGFhgaVhYQBhYwJhb4GCAAFhcqNhbIKBAIEBYmxygYIAAWFzgYIAAWFzAWFjD2FnomFFgoMAAgCDAQIAYVqDAQEIYXaDAgAB"
+        assert masm.JsonSerialization.equal_molecules(test_graph.split(";")[0], ref_graph_1)
+        for tmp_graph in test_graph.split(";")[1:]:
+            assert masm.JsonSerialization.equal_molecules(tmp_graph, ref_graph_2)

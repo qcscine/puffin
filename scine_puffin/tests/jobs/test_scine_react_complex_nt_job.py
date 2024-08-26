@@ -161,6 +161,7 @@ class ScineReactComplexNtJobTest(JobTestCase):
         assert new_elementary_step_one.get_type() == db.ElementaryStepType.BARRIERLESS
         new_elementary_step_two = db.ElementaryStep(results.elementary_step_ids[1], elementary_steps)
         assert new_elementary_step_two.get_type() == db.ElementaryStepType.REGULAR
+        assert new_elementary_step_two.has_spline()
         assert new_elementary_step_one.get_reactants(db.Side.RHS)[1][0] == \
             new_elementary_step_two.get_reactants(db.Side.LHS)[0][0]
         s_complex = db.Structure(new_elementary_step_two.get_reactants(db.Side.LHS)[0][0])
@@ -496,7 +497,6 @@ class ScineReactComplexNtJobTest(JobTestCase):
         # Check results
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        print(calculation.get_comment())
         assert len(results.property_ids) > 5
         assert len(results.structure_ids) == 2  # TS + product
         assert len(results.elementary_step_ids) == 1

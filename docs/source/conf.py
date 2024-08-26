@@ -4,6 +4,8 @@
 import sphinx_rtd_theme
 import scine_puffin
 import recommonmark
+import sys
+import pathlib
 from recommonmark.transform import AutoStructify
 
 # -- General configuration ------------------------------------------------
@@ -25,7 +27,6 @@ extensions = [
     'sphinx.ext.githubpages',
     'sphinx.ext.intersphinx',
     'sphinx.ext.mathjax',
-    'sphinx_autodoc_typehints',
     'sphinx.ext.viewcode',
     'matplotlib.sphinxext.plot_directive',
     'numpydoc',
@@ -177,6 +178,14 @@ texinfo_documents = [
      'Miscellaneous'),
 ]
 
+autodoc_default_options = {
+    "autosummary": True,
+    "members": True,
+    "undoc-members": True,
+    "inherited-members": True,
+    "class-doc-from": "both",
+}
+
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3/', None),
@@ -184,3 +193,6 @@ intersphinx_mapping = {
     'scipy': ('https://docs.scipy.org/doc/scipy-1.7.1/', None),
     'matplotlib': ('https://matplotlib.org/stable', None),
 }
+# If extensions (or modules to document with autodoc) are in another directory,
+# add these directories to sys.path here.
+sys.path.insert(0, pathlib.Path(__file__).parents[2].resolve().as_posix())

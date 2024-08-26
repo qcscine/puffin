@@ -1,19 +1,27 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
-import scine_molassembler as masm
+from typing import TYPE_CHECKING
 
 from scine_puffin.config import Configuration
 from scine_puffin.utilities import scine_helper
 from .templates.job import breakable, calculation_context, job_configuration_wrapper
 from .templates.scine_react_job import ReactJob
+from ..utilities.task_to_readuct_call import SubTaskToReaductCall
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class ScineReactComplexAfir(ReactJob):
-    """
+    __doc__ = ("""
     A job that tries to enforce a reaction, given a reactive complex and its parts.
     The reactive complex is expected to be generated as two structures placed
     next to one another or, for intramolecular reactions, to be equal to the start structure.
@@ -46,10 +54,10 @@ class ScineReactComplexAfir(ReactJob):
       intramolecular reaction is set up. Furthermore, the reactive sites in the
       complex that shall be pressed onto one another need to be given using:
 
-      afir_afir_rhs_list :: int
+      afir_afir_rhs_list : int
          This specifies list of indices of atoms to be artificially forced onto
          or away from those in the LHS list.
-      afir_afir_lhs_list :: int
+      afir_afir_lhs_list : int
          This specifies list of indices of atoms to be artificially forced onto
          or away from those in the RHS list.
 
@@ -58,7 +66,7 @@ class ScineReactComplexAfir(ReactJob):
       any ``Calculation`` stored in a SCINE Database.
       All possible settings for this job are based on those available in SCINE
       Readuct. For a complete list see the
-      `ReaDuct manual <https://scine.ethz.ch/static/download/readuct_manual.pdf>`_
+      `ReaDuct manual <https://scine.ethz.ch/download/readuct>`_
 
       Given that this job does more than one, in fact many separate calculations
       it is possible to target each individually with the settings. In order to
@@ -79,116 +87,18 @@ class ScineReactComplexAfir(ReactJob):
        4. TS optimization: ``tsopt_*``
        5. Validation using an IRC scan: ``irc_*``
        6. Optimization of the structures obtained with the IRC scan : ``ircopt_*``
-       7. Optimization of new products: ``opt_*``
-       8. (Optional) optimization of the reactive complex: ``rcopt_*``
+       7. Analyze supersystem, derive individual products and assign charges: ``sp_*``
+       8. Optimization of new products: ``opt_*``
+       9. (Optional) optimization of the reactive complex: ``rcopt_*``
 
-      The following options are available for the reactive complex generation:
+    """ + "\n"
+               + ReactJob.optional_settings_doc() + "\n"
+               + ReactJob.general_calculator_settings_docstring() + "\n"
+               + ReactJob.generated_data_docstring() + "\n"
+               + ReactJob.required_packages_docstring()
+               )
 
-      rc_x_alignment_0 :: List[float], length=9
-          In case of two structures building the reactive complex, this option
-          describes a rotation of the first structure (index 0) that aligns
-          the reaction coordinate along the x-axis (pointing towards +x).
-          The rotation assumes that the geometric mean position of all
-          atoms in the reactive site (``afir_lhs_list``) is shifted into the
-          origin.
-      rc_x_alignment_1 :: List[float], length=9
-          In case of two structures building the reactive complex, this option
-          describes a rotation of the second structure (index 1) that aligns
-          the reaction coordinate along the x-axis (pointing towards -x).
-          The rotation assumes that the geometric mean position of all
-          atoms in the reactive site (``afir_rhs_list``) is shifted into the
-          origin.
-      rc_x_rotation :: float
-          In case of two structures building the reactive complex, this option
-          describes a rotation angle around the x-axis of one of the two
-          structures after ``rc_x_alignment_0`` and ``rc_x_alignment_1`` have
-          been applied.
-      rc_x_spread :: float
-          In case of two structures building the reactive complex, this option
-          gives the distance by which the two structures are moved apart along
-          the x-axis after ``rc_x_alignment_0``, ``rc_x_alignment_1``, and
-          ``rc_x_rotation`` have been applied.
-      rc_displacement :: float
-          In case of two structures building the reactive complex, this option
-          adds a random displacement to all atoms (random direction, random
-          length). The maximum length of this displacement (per atom) is set to
-          be the value of this option.
-      rc_spin_multiplicity :: int
-          This option sets the ``spin_multiplicity`` of the reactive complex.
-          In case this is not given the ``spin_multiplicity`` of the initial
-          structure or minimal possible spin of the two initial structures is
-          used.
-      rc_molecular_charge :: int
-          This option sets the ``molecular_charge`` of the reactive complex.
-          In case this is not given the ``molecular_charge`` of the initial
-          structure or sum of the charges of the initial structures is used.
-          Note: If you set the ``rc_molecular_charge`` to a value different
-          from the sum of the start structures charges the possibly resulting
-          elementary steps will never be balanced but include removal or
-          addition of electrons.
-      rc_minimal_spin_multiplicity :: bool
-          True: The total spin multiplicity in a bimolecular reaction is
-          based on the assumption of total spin recombination (s + t = s; t + t = s; d + s = d; d + t = d)
-          False: No spin recombination is assumed (s + t = t; t + t = quin; d + s = d; d + t = quar)
-          (default: False)
-
-      The following settings are recognized without a prepending flag:
-
-      add_based_on_distance_connectivity :: bool
-          Whether to add the connectivity (i.e. add bonds) as derived from
-          atomic distances when graphs are generated. (default: True)
-      sub_based_on_distance_connectivity :: bool
-          Whether to subtract the connectivity (i.e. remove bonds) as derived from
-          atomic distances when graphs are generated. (default: True)
-      only_distance_connectivity :: bool
-          Whether to impose the connectivity solely from distances. (default: False)
-      imaginary_wavenumber_threshold :: float
-          Threshold value in inverse centimeters below which a wavenumber
-          is considered as imaginary when the transition state is analyzed.
-          Negative numbers are interpreted as imaginary. (default: 0.0)
-      spin_propensity_check :: int
-          The range to check for possible multiplicities for products. A value
-          of 2 (default) will check triplet and quintet for a singlet
-          and will check singlet, quintet und septet for triplet.
-
-      Additionally all settings that are recognized by the SCF program chosen.
-      are also available. These settings are not required to be prepended with
-      any flag.
-
-      Common examples are:
-
-      max_scf_iterations :: int
-         The number of allowed SCF cycles until convergence.
-
-    **Required Packages**
-      - SCINE: Database (present by default)
-      - SCINE: molassembler (present by default)
-      - SCINE: Readuct (present by default)
-      - SCINE: Utils (present by default)
-      - A program implementing the SCINE Calculator interface, e.g. Sparrow
-
-    **Generated Data**
-      If successful (technically and chemically) the following data will be
-      generated and added to the database:
-
-      Elementary Steps
-        If found, a single new elementary step with the associated transition
-        state will be added to the database.
-
-      Structures
-        The transition state (TS) and also the separated products will be added
-        to the database.
-
-      Properties
-        The ``hessian`` (``DenseMatrixProperty``), ``frequencies``
-        (``VectorProperty``), ``normal_modes`` (``DenseMatrixProperty``),
-        ``gibbs_energy_correction`` (``NumberProperty``) and
-        ``gibbs_free_energy`` (``NumberProperty``) of the TS will be
-        provided. The ``electronic_energy`` associated with the TS structure and
-        each of the products will be added to the database.
-    """
-
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.name = "Scine React Job with AFIR"
         self.exploration_key = "afir"
@@ -224,12 +134,13 @@ class ScineReactComplexAfir(ReactJob):
             "tsopt": tsopt_defaults,
             "irc": irc_defaults,
             "ircopt": ircopt_defaults,
-            "opt": opt_defaults,
+            self.opt_key: opt_defaults
         }
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
+        import scine_molassembler as masm
         import scine_readuct as readuct
         import scine_utilities as utils
 
@@ -241,7 +152,7 @@ class ScineReactComplexAfir(ReactJob):
             print("Afir Settings:")
             print(self.settings["afir"], "\n")
             self.systems, success = self.observed_readuct_call(
-                'run_afir_task', self.systems, [self.rc_key], **self.settings["afir"]
+                SubTaskToReaductCall.AFIR, self.systems, [self.rc_key], **self.settings["afir"]
             )
             if not success:
                 self.verify_connection()
@@ -258,16 +169,16 @@ class ScineReactComplexAfir(ReactJob):
                 # update model because job will be marked complete
                 # use start calculator because afir might have last failed calculation
                 scine_helper.update_model(
-                    self.systems[self.rc_key], calculation, self.config
+                    self.get_system(self.rc_key), calculation, self.config
                 )
                 raise breakable.Break
 
             """ Endpoint Optimization """
             inputs = self.output("afir")
             print("Endpoint Opt Settings:")
-            print(self.settings["opt"], "\n")
+            print(self.settings[self.opt_key], "\n")
             self.systems, success = self.observed_readuct_call(
-                'run_optimization_task', self.systems, inputs, **self.settings["opt"]
+                SubTaskToReaductCall.OPT, self.systems, inputs, **self.settings[self.opt_key]
             )
             self.throw_if_not_successful(
                 success,
@@ -285,24 +196,23 @@ class ScineReactComplexAfir(ReactJob):
                 end_charges,
                 _,
                 _
-            ) = self.get_graph_charges_multiplicities(self.output("opt")[0], initial_charge)
+            ) = self.get_graph_charges_multiplicities(self.output(self.opt_key)[0], initial_charge)
 
             print("Start Graph:")
             print(self.start_graph)
             print("End Graph:")
             print(self.end_graph)
-
             found_new_structures = bool(not masm.JsonSerialization.equal_molecules(self.start_graph, self.end_graph)
                                         or self.start_charges != end_charges)
             if not found_new_structures:
                 self._calculation.set_comment("No new structure was discovered")
                 scine_helper.update_model(
-                    self.systems[self.output("opt")[0]], calculation, self.config
+                    self.get_system(self.output(self.opt_key)[0]), calculation, self.config
                 )
                 raise breakable.Break
 
             """ B-Spline Optimization """
-            inputs = [self.rc_key] + self.output("opt")
+            inputs = [self.rc_key] + self.output(self.opt_key)
             print("\nBspline Settings:")
             print(self.settings["bspline"], "\n")
             self.systems, success = readuct.run_bspline_task(
@@ -317,7 +227,13 @@ class ScineReactComplexAfir(ReactJob):
             )
 
             """ TS Optimization """
-            tsguess = self.output("bspline")[0]
-            self._tsopt_hess_irc_ircopt_postprocessing(tsguess, settings_manager, program_helper)
+            tsguess_name = self.output("bspline")[0]
+            try:
+                self._tsopt_hess_irc_ircopt_postprocessing(tsguess_name, settings_manager, program_helper)
+            except BaseException:
+                _, tsguess_structure = self._store_ts_with_propensity_info(tsguess_name, program_helper,
+                                                                           db.Label.TS_GUESS)
+                self._calculation.set_restart_information("TS_GUESS", tsguess_structure.id())
+                raise
 
         return self.postprocess_calculation_context()

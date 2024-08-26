@@ -1,18 +1,26 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """scine_helper.py: Collection of common procedures to be carried out in scine jobs"""
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Dict, TYPE_CHECKING, Any, Optional
 import copy
 import sys
 
-import scine_database as db
-import scine_utilities as utils
-
 from scine_puffin.config import Configuration
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    utils = MissingDependency("scine_utilities")
 
 
 class SettingsManager:
@@ -24,22 +32,22 @@ class SettingsManager:
         self,
         method_family: str,
         program: str,
-        calculator_settings: Union[dict, None] = None,
-        task_settings: Union[dict, None] = None,
-    ):
+        calculator_settings: Union[utils.Settings, None] = None,
+        task_settings: Union[Dict[str, Any], None] = None,
+    ) -> None:
         """
         Constructor of the SettingsManager.
         Initializes class with method_family and program to get the available settings for the calculator.
 
         Parameters
         ----------
-        method_family :: db.Model.method_family
+        method_family : db.Model.method_family
             The method_family to be used in the calculator.
-        program :: db.Model.program
+        program : db.Model.program
             The program to be used in the calculator.
-        calculator_settings :: dict
+        calculator_settings : utils.Settings
             Settings specific to the calculator. 'None' by default. This should be the full settings of the calculator.
-        task_settings :: dict
+        task_settings : dict
             Dictionary of settings specific to the task. 'None' by default.
         """
 
@@ -49,22 +57,23 @@ class SettingsManager:
         if calculator_settings is None:
             self.calculator_settings = utils.Settings(
                 "calc_settings",
-                {"program": program, **self.default_calculator_settings},
+                {"program": program, **self.default_calculator_settings},  # type: ignore
             )
         else:
-            self.calculator_settings = utils.Settings("calc_settings", {"program": program, **calculator_settings})
+            self.calculator_settings = utils.Settings("calc_settings",
+                                                      {"program": program, **calculator_settings})  # type: ignore
         # Set the task settings to an empty dict if the parameter is 'None'; otherwise set the given dict
         self.task_settings = {} if task_settings is None else copy.deepcopy(task_settings)
         self.cores_were_set = False
         self.memory_was_set = False
 
-    def setting_is_available(self, setting_key: str):
+    def setting_is_available(self, setting_key: str) -> bool:
         """
         Check, if given setting_key is a setting in the calculator
 
         Parameters
         ----------
-        setting_key :: list
+        setting_key : list
             The settings_key to be checked.
         """
 
@@ -79,35 +88,36 @@ class SettingsManager:
             )
             return False
 
-    def separate_settings(self, calculation_settings: utils.ValueCollection):
+    def separate_settings(self, calculation_settings: utils.ValueCollection) -> None:
         """
         Extract calculator and task settings from the given calculation settings.
         Uses the information of the settings which are available for a calculator.
 
         Parameters
         ----------
-        calculation_settings :: dict
+        calculation_settings : dict
             The dictionary of the calculation settings (read from database).
         """
         self.calculator_settings.update(calculation_settings)
-        for key, value in calculation_settings.items():
+        for key, value in dict(calculation_settings).items():
             if key not in self.calculator_settings.keys():
                 self.task_settings[key] = value
         self.cores_were_set = "external_program_nprocs" in calculation_settings
         self.memory_was_set = "external_program_memory" in calculation_settings
 
-    def update_calculator_settings(self, structure: Union[None, db.Structure], model: db.Model, resources: dict):
+    def update_calculator_settings(self, structure: Union[None, db.Structure], model: db.Model, resources: dict) \
+            -> None:
         """
         Update calculator settings with information about the structure, the model, the resources and
         the available_calculator settings.
 
         Parameters
         ----------
-        structure :: db.Structure
+        structure : db.Structure
             The database structure object to be analysed.
-        model :: db.Model
+        model : db.Model
             The database model object to be used.
-        resources :: dict
+        resources : dict
             Resources of the calculator (config['resources']).
         """
         # Update structure related settings
@@ -125,7 +135,7 @@ class SettingsManager:
         if "external_program_nprocs" in self.calculator_settings.keys():
             set_cores = self.calculator_settings["external_program_nprocs"]
             # Check, if settings are requesting more than available
-            if set_cores > int(resources["cores"]):
+            if set_cores > int(resources["cores"]):  # type: ignore
                 sys.stderr.write(
                     "WARNING: Do not request more than you can chew.\n 'external_program_nprocs' is "
                     "reset to " + str(resources["cores"]) + ".\n"
@@ -136,7 +146,7 @@ class SettingsManager:
                 self.calculator_settings["external_program_nprocs"] = int(resources["cores"])
 
         if "external_program_memory" in self.calculator_settings.keys():
-            set_memory = int(self.calculator_settings["external_program_memory"])
+            set_memory = int(self.calculator_settings["external_program_memory"])  # type: ignore
             # Check, if settings are requesting more than available
             if set_memory > int(resources["memory"] * 1024):
                 sys.stderr.write(
@@ -154,21 +164,22 @@ class SettingsManager:
         calculation: db.Calculation,
         settings: utils.ValueCollection,
         resources: dict,
-    ) -> Tuple[dict, List[str]]:
+    ) -> Tuple[Dict[str, Optional[utils.core.Calculator]], List[str]]:
         """
         Constructs a dictionary with a Scine Calculator based on the calculation settings and resources to have an
         input for a ReaDuct task
 
         Parameters
         ----------
-        structure :: db.Structure
+        structure : db.Structure
             The database structure object to be analysed.
-        calculation :: db.Calculation
+        calculation : db.Calculation
             The database calculation that shall be calculated with ReaDuct.
-        settings :: utils.ValueCollection
+        settings : utils.ValueCollection
             The settings of the database calculation.
-        resources :: dict
+        resources : dict
             Resources of the calculator (config['resources']).
+
         Returns
         -------
         Tuple[dict, List[str]]]
@@ -208,11 +219,11 @@ def update_model(
 
     Parameters
     ----------
-    calculator :: utils.core.Calculator
+    calculator : utils.core.Calculator
         The calculator that performed the calculation.
-    calculation :: db.Calculation
+    calculation : db.Calculation
         The database calculation that is currently run.
-    config :: scine_puffin.config.Configuration
+    config : scine_puffin.config.Configuration
        The current configuration of the Puffin necessary for the program's version.
     """
     model = calculation.get_model()

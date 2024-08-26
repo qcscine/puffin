@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
@@ -8,9 +9,15 @@ import os
 import re
 import subprocess
 import glob
-from typing import Any, List, Tuple
+from typing import Any, List, Tuple, TYPE_CHECKING
 from scine_puffin.config import Configuration
 from .templates.job import Job, calculation_context, job_configuration_wrapper
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class OrcaGeometryOptimization(Job):
@@ -28,24 +35,24 @@ class OrcaGeometryOptimization(Job):
       any ``Calculation`` stored in a SCINE Database.
       Possible settings for this job are:
 
-      convergence_max_iterations :: int
+      convergence_max_iterations : int
          The maximum number of geometry optimization cycles.
-      cartesian_constraints :: List[int]
+      cartesian_constraints : List[int]
          A list of atom indices of the atoms which positions will be
          constrained during the optimization.
-      max_scf_iterations :: int
+      max_scf_iterations : int
          The number of allowed SCF cycles until convergence.
-      self_consistence_criterion :: float
+      self_consistence_criterion : float
          The self consistence criterion corresponding to the maximum
          energy change between two SCF cycles resulting in convergence.
-      scf_damping :: bool
+      scf_damping : bool
          Switches damping on or off during the SCF by employing the Orca
          keyword SlowConv. The default is False.
-      calculate_hirshfeld_charges :: bool
+      calculate_hirshfeld_charges : bool
          Calculates atomic partial charges based on the Hirshfeld population
          analysis for the optimized structure and stores these into the
          database. The default is False.
-      transform_coordinates :: bool
+      transform_coordinates : bool
          Switch to transform the input coordinates from Cartesian to redundant
          internal coordinates. Setting this value to False and hence performing
          the calculation in Cartesian coordinates is helpful in rare occasions
@@ -68,7 +75,7 @@ class OrcaGeometryOptimization(Job):
         The ``electronic_energy`` associated with the new structure.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.input_file = "orca_calc.inp"
         self.output_file = "orca_calc.out"
@@ -144,6 +151,7 @@ class OrcaGeometryOptimization(Job):
 
         successful = False
         atomic_charges: List[float] = []
+        optimized_energy = None
         with open(self.output_file, "r") as out:
             lines = out.readlines()
             for line_index, line in enumerate(lines):
@@ -168,6 +176,8 @@ class OrcaGeometryOptimization(Job):
                         atomic_charges.append(float(charge))
                         current_line_index += 1
         if successful:
+            if optimized_energy is None:
+                raise RuntimeError("Optimization converged but no energy found in output file.")
             optimized_structure, _ = utils.io.read(self.output_structure)
             return optimized_structure, float(optimized_energy), atomic_charges
         else:
@@ -186,9 +196,8 @@ class OrcaGeometryOptimization(Job):
             )
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
 
-        import scine_database as db
         import scine_utilities as utils
 
         # Gather all required collections
@@ -239,7 +248,7 @@ class OrcaGeometryOptimization(Job):
                 model,
                 job,
                 config["daemon"]["uuid"],
-                calculation.get_settings(),
+                dict(calculation.get_settings()),
             )
             # Execute ORCA
             self.execute_program()
@@ -340,5 +349,5 @@ class OrcaGeometryOptimization(Job):
         return True
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "utils", "orca"]

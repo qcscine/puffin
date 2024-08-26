@@ -18,7 +18,7 @@ def bootstrap(config: Configuration):
 
     Parameters
     ----------.
-    config :: scine_puffin.config.Configuration
+    config : scine_puffin.config.Configuration
        The current configuration of the Puffin.
     """
     # Prepare directories
@@ -71,25 +71,9 @@ def bootstrap(config: Configuration):
     utils = Utils(config.programs()["utils"])
     utils.install(utils_build_dir, install_dir, config["resources"]["cores"])
 
-    # Install all other programs
-    for program_name, settings in config.programs().items():
-        if program_name in ['core', 'utils'] or not settings["available"]:
-            continue
-        print("")
-        print("Preparing " + program_name.capitalize() + "...")
-        print("")
-        module = importlib.import_module("scine_puffin.programs." + program_name)
-        class_ = getattr(module, program_name.capitalize())
-        program = class_(settings)
-        program_build_dir = os.path.join(build_dir, program_name)
-        program.install(program_build_dir, install_dir, config["resources"]["cores"])
-
-    # Setup environment
-    #  General setup
+    # setup Python path already now for crosslinking for Python type stubs
     env = {}
-    executables = {}
     python_version = sys.version_info
-    executables["OMP_NUM_THREADS"] = str(config["resources"]["cores"])
     env["PYTHONPATH"] = (
         os.path.join(
             install_dir,
@@ -121,6 +105,25 @@ def bootstrap(config: Configuration):
             "dist-packages",
         )
     )
+    os.environ["PYTHONPATH"] = env["PYTHONPATH"]
+
+    # Install all other programs
+    for program_name, settings in config.programs().items():
+        if program_name in ['core', 'utils'] or not settings["available"]:
+            continue
+        print("")
+        print("Preparing " + program_name.capitalize() + "...")
+        print("")
+        module = importlib.import_module("scine_puffin.programs." + program_name)
+        class_ = getattr(module, program_name.capitalize())
+        program = class_(settings)
+        program_build_dir = os.path.join(build_dir, program_name)
+        program.install(program_build_dir, install_dir, config["resources"]["cores"])
+
+    # Setup environment
+    #  General setup
+    executables = {}
+    executables["OMP_NUM_THREADS"] = str(config["resources"]["cores"])
     env["PATH"] = os.path.join(install_dir, "bin")
     env["LD_LIBRARY_PATH"] = os.path.join(install_dir, "lib") + ":" + os.path.join(install_dir, "lib64")
     env["SCINE_MODULE_PATH"] = os.path.join(install_dir, "lib") + ":" + os.path.join(install_dir, "lib64")

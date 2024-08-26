@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, TYPE_CHECKING
 
-import scine_database as db
+from scine_puffin.utilities.imports import module_exists, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
 
 
 class TransferHelper(ABC):
@@ -44,10 +50,10 @@ class TransferHelper(ABC):
 
         Parameters
         ----------
-        old_structure : db.Structure
-            The structure holding the properties
-        new_structure : db.Structure
-            The structure receiving the properties
+        old_structures : List[db.Structure]
+            The structures holding the properties
+        new_structures : List[db.Structure]
+            The structures receiving the properties
         properties_to_transfer: List[str]
             The names of the properties to transfer
         """
@@ -65,7 +71,7 @@ class TransferHelper(ABC):
             The structure holding the properties
         new_structure : db.Structure
             The structure receiving the properties
-        properties_to_transfer : List[str]
+        properties : List[str]
             The names of the properties to transfer
         """
         for prop in properties:

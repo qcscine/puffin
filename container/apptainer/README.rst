@@ -52,3 +52,4 @@ A more complete run could thus look like this:
    apptainer run --bind /scratch/puffin:/socket \
                    --bind /scratch/puffin/jobs:/jobs \
                    puffin.sif
+

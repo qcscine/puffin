@@ -1,40 +1,47 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
+from abc import ABC
+from typing import TYPE_CHECKING, List
+
 import numpy as np
 
-import scine_database as db
-import scine_utilities as utils
-
-
-from .job import job_configuration_wrapper
 from .scine_job import ScineJob
-from scine_puffin.config import Configuration
+from .job import is_configured
+from scine_puffin.utilities.imports import module_exists, requires, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    utils = MissingDependency("scine_utilities")
 
 
-class HessianJob(ScineJob):
+class HessianJob(ScineJob, ABC):
     """
     A common interface for all jobs in Puffin that use the Scine::Core::Calculator interface to calculate a Hessian
     and carry out a Thermochemistry analysis.
     """
 
-    def __init__(self):
+    own_expected_results = ["energy", "hessian", "thermochemistry"]
+
+    def __init__(self) -> None:
         super().__init__()
         self.name = "HessianJob"
-        self.own_expected_results = ["energy", "hessian", "thermochemistry"]
-
-    @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
-        """See Job.run()"""
-        raise NotImplementedError
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "readuct", "utils"]
 
+    @is_configured
+    @requires("utilities")
     def store_hessian_data(self, system: utils.core.Calculator, structure: db.Structure) -> None:
         """
         Stores results from a Hessian calculation and Thermochemistry for the specified structure based on the given
@@ -46,9 +53,9 @@ class HessianJob(ScineJob):
 
         Parameters
         ----------
-        system :: core.calculator (Scine::Core::Calculator)
+        system : utils.core.Calculator (Scine::Core::Calculator)
             A Scine calculator holding a results object with energy, Hessian, and Thermochemistry properties.
-        structure :: db.Structure (Scine::Database::Structure)
+        structure : db.Structure (Scine::Database::Structure)
             A structure for which the property is saved.
         """
         results = system.get_results()
@@ -108,7 +115,6 @@ class HessianJob(ScineJob):
             thermo_calculator.set_temperature(float(model.temperature))
             thermo_calculator.set_pressure(float(model.pressure))
             thermo_container = thermo_calculator.calculate()
-
         self.store_property(
             self._properties,
             "gibbs_free_energy",

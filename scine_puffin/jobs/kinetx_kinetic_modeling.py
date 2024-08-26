@@ -1,17 +1,26 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
 
-from typing import List
-
-import scine_database as db
+from typing import Any, TYPE_CHECKING, List, Dict
 
 from .templates.job import breakable, calculation_context, job_configuration_wrapper
 from .templates.kinetic_modeling_jobs import KineticModelingJob
 from ..utilities.compound_and_flask_helpers import get_compound_or_flask
 from scine_puffin.config import Configuration
+from scine_puffin.utilities.imports import module_exists, requires, MissingDependency
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = MissingDependency("scine_database")
+if module_exists("scine_utilities") or TYPE_CHECKING:
+    import scine_utilities as utils
+else:
+    utils = MissingDependency("scine_utilities")
 
 
 class KinetxKineticModeling(KineticModelingJob):
@@ -27,43 +36,43 @@ class KinetxKineticModeling(KineticModelingJob):
       ``kinetx_kinetic_modeling``
 
     **Required Input**
-      model :: db.Model
-         The electronic structure model to flag the new properties with.
+      model : db.Model
+        The electronic structure model to flag the new properties with.
 
     **Required Settings**
-      aggregate_ids :: List[str]
+      aggregate_ids : List[str]
         The aggregate IDs (as strings).
-      reaction_ids :: List[str]
+      reaction_ids : List[str]
         The reaction IDs (as strings).
-      aggregate_types :: List[int]
+      aggregate_types : List[int]
         The aggregate types. 0 for compounds, 1 for flasks.
-       lhs_rates :: List[float]
-         The reaction rates for the forward reactions.
-       rhs_rates :: List[float]
-         The reaction rates for the backward reactions.
+      lhs_rates : List[float]
+        The reaction rates for the forward reactions.
+      rhs_rates : List[float]
+        The reaction rates for the backward reactions.
     **Optional Settings**
       Optional settings are read from the ``settings`` field, which is part of
       any ``Calculation`` stored in a SCINE Database.
 
       The following options are available:
 
-      time_step ::float
+      time_step : float
           The integration time step.
-      solver :: str
+      solver : str
           The name of the numerical differential equation solver. Options are "CashKarp5" (default),
           "ImplicitEuler", and "ExplicitEuler".
-      batch_interval :: int
+      batch_interval : int
           The numerical integration is done in batches of time steps. After each step the maximum
           concentration for each compound is updated. This is the size of each time-step batch.
-      n_batches :: int
+      n_batches : int
           The numerical integration is done in batches of time steps. After each step the maximum
           concentration for each compound is updated. This is the number of time-step batches.
-      energy_model_program :: str
+      energy_model_program : str
           The program with which the electronic structure model should be flagged. Default any.
-      convergence :: float
+      convergence : float
           Stop the numerical integration if the concentrations do not change more than this threshold between
           intervals.
-      concentration_label_postfix :: str
+      concentration_label_postfix : str
           Post fix to the property label. Default "".
 
     **Required Packages**
@@ -82,10 +91,10 @@ class KinetxKineticModeling(KineticModelingJob):
         documents.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.name = "KiNetX kinetic modeling job"
-        self.settings = {
+        self.settings: Dict[str, Any] = {
             "energy_label": "electronic_energy",
             "time_step": 1e-8,
             "solver": "cash_karp_5",
@@ -96,20 +105,20 @@ class KinetxKineticModeling(KineticModelingJob):
             "concentration_label_postfix": ""
         }
         self.model = db.Model("PM6", "PM6", "")
-        self._flask_decomposition = dict()
 
     @job_configuration_wrapper
-    def run(self, manager, calculation, config: Configuration) -> bool:
+    def run(self, manager: db.Manager, calculation: db.Calculation, config: Configuration) -> bool:
         import scine_kinetx as kinetx
 
         with breakable(calculation_context(self)):
             self.settings.update(calculation.get_settings())
-            aggregate_id_list = [db.ID(c_id_str) for c_id_str in self.settings["aggregate_ids"]]
-            aggregate_type_list = [db.CompoundOrFlask(a_type) for a_type in self.settings["aggregate_types"]]
-            reaction_ids = [db.ID(r_id_str) for r_id_str in self.settings["reaction_ids"]]
-            lhs_rates_per_reaction = self.settings["lhs_rates"]
-            rhs_rates_per_reaction = self.settings["rhs_rates"]
-            concentrations = self.settings["start_concentrations"]
+            aggregate_id_list = [db.ID(c_id_str) for c_id_str in self._get_setting_value_list("aggregate_ids")]
+            aggregate_type_list = [db.CompoundOrFlask(a_type)
+                                   for a_type in self._get_setting_value_list("aggregate_types")]
+            reaction_ids = [db.ID(r_id_str) for r_id_str in self._get_setting_value_list("reaction_ids")]
+            lhs_rates_per_reaction = self._get_setting_value_list("lhs_rates")
+            rhs_rates_per_reaction = self._get_setting_value_list("rhs_rates")
+            concentrations = self._get_setting_value_list("start_concentrations")
             self.model = calculation.get_model()
             n_reactions = len(reaction_ids)
             n_aggregates = len(aggregate_id_list)
@@ -147,12 +156,18 @@ class KinetxKineticModeling(KineticModelingJob):
                                                     [reaction_flux, reaction_flux_forward, reaction_flux_backward],
                                                     [self.c_max_label, self.c_final_label, self.c_flux_label],
                                                     [self.r_flux_label, self.r_forward_label, self.r_backward_label],
-                                                    results, self.settings["concentration_label_postfix"], True)
+                                                    results, self.settings["concentration_label_postfix"])
             # calculation.set_results(results)
             self._disable_all_aggregates()
             self.complete_job()
 
         return self.postprocess_calculation_context()
+
+    def _get_setting_value_list(self, name: str) -> List[Any]:
+        val = self.settings[name]
+        if not isinstance(val, list):
+            raise RuntimeError(f"Setting {name} must be a list.")
+        return val
 
     def _add_all_aggregates(self, aggregate_id_list: List[db.ID], aggregate_type_list: List[db.CompoundOrFlask],
                             network_builder) -> None:
@@ -165,19 +180,19 @@ class KinetxKineticModeling(KineticModelingJob):
             mass = self._calculate_weight(centroid)
             network_builder.add_compound(mass, a_id.string())
 
-    def _calculate_weight(self, structure_id) -> float:
-        import scine_utilities as utils
+    @requires("utilities")
+    def _calculate_weight(self, structure_id: db.ID) -> float:
         """
         Calculates the molecular weight, given a DB structure id.
 
         Attributes
         ----------
-        structure :: db.Structure
+        structure_id : db.ID
             The structure of which to calculate the molecular weight.
 
         Returns
         -------
-        weight :: float
+        weight : float
             The molecular weight in a.u. .
         """
         structure = db.Structure(structure_id, self._structures)
@@ -221,5 +236,5 @@ class KinetxKineticModeling(KineticModelingJob):
             raise AssertionError("Unbalanced masses in reaction. You are destroying/creating atoms!")
 
     @staticmethod
-    def required_programs():
+    def required_programs() -> List[str]:
         return ["database", "kinetx", "utils"]
