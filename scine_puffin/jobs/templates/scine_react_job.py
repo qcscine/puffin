@@ -7,7 +7,7 @@ See LICENSE.txt for details.
 
 from abc import ABC
 from math import ceil
-from typing import Any, Dict, List, Tuple, Union, Optional, Set, TYPE_CHECKING
+from typing import cast, Any, Dict, List, Tuple, Union, Optional, Set, TYPE_CHECKING
 import sys
 import os
 from copy import deepcopy
@@ -71,6 +71,7 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
                 },
                 "always_add_barrierless_step_for_reactive_complex": False,
                 "allow_exhaustive_product_decomposition": False,
+                "complexation_criterion": -12.0 / 2625.5,  # kj/mol
             },
             self.rc_key: {
                 "minimal_spin_multiplicity": False,
@@ -103,6 +104,7 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         self.rhs_complexation = False
         self.complexation_criterion = -12.0 / 2625.5  # kj/mol
         self.check_charges = True
+        self._is_qmmm_calculation = False  # must be set by child job
         self.systems: Dict[str, Optional[utils.core.Calculator]] = {}
         self._component_maps: Dict[str, List[int]] = {}
         self.products_component_map: Optional[List[int]] = None
@@ -251,6 +253,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         # This overwrites any default settings by user settings
         settings_manager.separate_settings(self._calculation.get_settings())
         self.sort_settings(settings_manager.task_settings)
+        if "complexation_criterion" in self.settings[self.job_key]:
+            self.complexation_criterion = float(self.settings[self.job_key]["complexation_criterion"])
         """ Setup calculators for all reactants """
         self.systems = dict()
         for i, structure_id in enumerate(self._calculation.get_structures()):
@@ -266,7 +270,7 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             structure_calculator_settings[utils.settings_names.spin_multiplicity] = structure.get_multiplicity()
             reactant = utils.core.load_system_into_calculator(
                 xyz_name,
-                self._calculation.get_model().method_family,
+                self.get_model().method_family,
                 **structure_calculator_settings,
             )
             self.systems[name] = reactant
@@ -286,7 +290,7 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         utils.io.write("reactive_complex.xyz", reactive_complex_atoms)
         reactive_complex = utils.core.load_system_into_calculator(
             "reactive_complex.xyz",
-            self._calculation.get_model().method_family,
+            self.get_model().method_family,
             **settings_manager.calculator_settings,
         )
         self.systems[self.rc_key] = reactive_complex
@@ -443,7 +447,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
 
     @is_configured
     @requires("database")
-    def build_reactive_complex(self, settings_manager: SettingsManager) -> utils.AtomCollection:
+    def build_reactive_complex(self, settings_manager: Union[SettingsManager, None] = None,
+                               end_index: int = -1) -> utils.AtomCollection:
         """
         Aligns the structure(s) to form a reactive complex and returns the AtomCollection. In case of multiple
         structures, the active site settings are modified to reflect the correct index in the supermolecule.
@@ -456,8 +461,11 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
 
         Parameters
         ----------
-        settings_manager : SettingsManager
+        settings_manager : Optional[SettingsManager]
             The settings_manager in which the charge and multiplicity of the new atoms are set.
+        end_index : int
+            The index of the last structure to be used for the reactive complex.
+            Default is -1, all structures are used.
 
         Returns
         -------
@@ -465,8 +473,12 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             The atoms of the reactive complex
         """
         start_structure_ids = self._calculation.get_structures()
-        start_structures = [db.Structure(sid, self._structures) for sid in start_structure_ids]
-        self.save_initial_graphs_and_charges(settings_manager, start_structures)
+        if end_index == -1:
+            start_structures = [db.Structure(sid, self._structures) for sid in start_structure_ids]
+        else:
+            start_structures = [db.Structure(sid, self._structures) for sid in start_structure_ids[:end_index]]
+        if settings_manager is not None:
+            self.save_initial_graphs_and_charges(settings_manager, start_structures)
         if len(start_structures) == 1:
             # For an intramolecular structure it is sufficient to provide one
             # structure that is both, start structure and reactive complex
@@ -558,14 +570,14 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
 
         if s1 is None:
             settings_manager.update_calculator_settings(
-                s0, self._calculation.get_model(), self.config["resources"])
+                s0, self.get_model(), self.config["resources"])
             if molecular_charge in self.settings[self.rc_key]:
                 settings_manager.calculator_settings[molecular_charge] = self.settings[self.rc_key][molecular_charge]
             if spin_multiplicity in self.settings[self.rc_key]:
                 settings_manager.calculator_settings[spin_multiplicity] = self.settings[self.rc_key][spin_multiplicity]
         else:
             settings_manager.update_calculator_settings(
-                None, self._calculation.get_model(), self.config["resources"])
+                None, self.get_model(), self.config["resources"])
 
             # set defaults
             default_charge = s0.get_charge() + s1.get_charge()
@@ -667,16 +679,18 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         name : str
             The name of the system which holds Hessian results.
         """
-        calc = self.systems.get(name)
-        if calc is None:
-            self.raise_named_exception(f"System '{name}' not found in systems.")
-            return -1  # only for linter
+        calc = self.get_system(name)
         atoms = calc.structure
-        hessian = calc.get_results().hessian
-        if hessian is None:
+        results = calc.get_results()
+
+        if results.partial_hessian is not None:
+            modes_container = utils.normal_modes.calculate(results.partial_hessian, atoms)
+        elif results.hessian is not None:
+            modes_container = utils.normal_modes.calculate(results.hessian, atoms)
+        else:
             self.raise_named_exception(f"No Hessian found for system '{name}'.")
             return -1  # only for linter
-        modes_container = utils.normal_modes.calculate(hessian, atoms)
+
         wavenumbers = modes_container.get_wave_numbers()
 
         return np.count_nonzero(np.array(wavenumbers) < self.settings[self.job_key]["imaginary_wavenumber_threshold"])
@@ -816,7 +830,6 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
                 range(len(split_structures)))))
         )
         graph_string = ";".join(graphs)
-
         ordered_structures = [split_structures[i] for i in structure_order]
         new_component_map = [structure_order.index(i) for i in list(masm_results.component_map)]
         self._component_maps[name] = new_component_map
@@ -1063,9 +1076,10 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         return self.settings[name]["output"]
 
     def analyze_side(self, input_name: str, initial_charge: int, opt_name: str,
-                     calculator_settings: utils.Settings) -> Union[Tuple[str, List[int], List[str], List[str]],
+                     calculator_settings: utils.Settings,
+                     method_family: Optional[str] = None) -> Union[Tuple[str, List[int], List[str], List[str]],
                                                                    Tuple[None, None, None, None]]:
-        print(opt_name.capitalize() + " Bond Orders")
+        print(opt_name.capitalize() + " Bond Orders:")
         (
             structures,
             full_graph,
@@ -1096,7 +1110,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
                                                               [structures[i] for i in min_indices],
                                                               [original_charges[i] for i in min_indices],
                                                               [original_multiplicities[i] for i in min_indices],
-                                                              calculator_settings)
+                                                              calculator_settings,
+                                                              method_family)
         # Map back to initial structures
         output_names = [""] * len(structures)
         unique_result: Dict[Tuple[str, int, int, str], str] = {}
@@ -1150,12 +1165,13 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
                         stored_names.append(unique_result[molecule_key])
                     else:
                         new_structure_indices.append(i)
+
                 # Optimize unknown structures
                 new_names, self.systems = self.optimize_structures(org_name, self.systems,
                                                                    [structures[i] for i in new_structure_indices],
                                                                    [split_charges[i] for i in new_structure_indices],
                                                                    [multiplicities[i] for i in new_structure_indices],
-                                                                   calculator_settings)
+                                                                   calculator_settings, method_family)
                 # Combine new and stored names
                 new_names += stored_names
                 # Remove entry due to split
@@ -1203,9 +1219,21 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
 
     def _determine_complexation_energy(self, input_name: str, molecule_names: List[str]) -> float:
         complexation_energy = 0.0
-        for name in molecule_names:
-            complexation_energy -= self.get_energy(self.get_system(name))
+        # NOTE: Only consider QM part
+        if self._is_qmmm_calculation:
+            qm_molecules: List[int] = []
+            for qm_atom in cast(List[int], self.get_system(input_name).settings['qm_atoms']):
+                qm_molecules.append(self._component_maps[input_name][qm_atom])
+            # Get relevant QM molecules
+            qm_molecules = list(set(qm_molecules))
+            print("QM Molecules:", qm_molecules)
+            for qm_molecule in qm_molecules:
+                complexation_energy -= self.get_energy(self.get_system(molecule_names[qm_molecule]))
+        else:
+            for name in molecule_names:
+                complexation_energy -= self.get_energy(self.get_system(name))
         complexation_energy += self.get_energy(self.get_system(input_name))
+
         print("Complexation Energy:", complexation_energy * utils.KJPERMOL_PER_HARTREE, "kJ/mol")
         return complexation_energy
 
@@ -1216,7 +1244,9 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             initial_charge: int,
             check_charges: bool,
             inputs: List[str],
-            calculator_settings: utils.Settings) -> Union[Tuple[List[str], Optional[List[str]]], Tuple[None, None]]:
+            calculator_settings: utils.Settings,
+            tsopt_task_name: str,
+            method_family: Optional[str] = None) -> Union[Tuple[List[str], Optional[List[str]]], Tuple[None, None]]:
         """
         Check whether we found a new structure, whether our IRC matches the start
         (and end in case of double ended). This decision is made based on optimized
@@ -1239,6 +1269,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             The name of the IRC outputs to use as inputs
         calculator_settings : utils.Settings
             The general settings for the Scine calculator. Charge and spin multiplicity will be overwritten.
+        tsopt_task_name : str
+            Name of the TS optimization task
 
         Returns
         -------
@@ -1253,13 +1285,14 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             )
         # All lists ordered according to graph - charges - multiplicities with decreasing priority
         # Get graphs, charges and minimal multiplicities of split forward and backward structures
+        # FUNCTION CALL INPUT[0], and input[1]
         (
             forward_graph,
             forward_charges,
             forward_decision_lists,
             forward_names
         ) = self.analyze_side(inputs[0], initial_charge, "forward",
-                              calculator_settings)
+                              calculator_settings, method_family)
         if any(f_info is None for f_info in [forward_graph, forward_charges, forward_decision_lists, forward_names]):
             # NOTE: Maybe still save TS for restart here
             return None, None
@@ -1271,16 +1304,13 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             backward_decision_lists,
             backward_names
         ) = self.analyze_side(inputs[1], initial_charge, "backward",
-                              calculator_settings)
+                              calculator_settings, method_family)
         if any(b_info is None for b_info in [backward_graph, backward_charges,
                                              backward_decision_lists, backward_names]):
             # NOTE: Maybe still save TS for restart here
             return None, None
         assert backward_graph
         assert backward_names
-        print("Forward charges: " + str(forward_charges))
-        print("Backward charges: " + str(backward_charges))
-
         # Check for new structures and compare IRC to Start
         print("Start Graph:")
         print(self.start_graph)  # Equals reactive complex graph
@@ -1296,8 +1326,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         found_new_structures = bool(not masm.JsonSerialization.equal_molecules(forward_graph, backward_graph)
                                     or forward_charges != backward_charges)
         if not found_new_structures:
-            self._calculation.set_comment(self.name + ": IRC forward and backward have identical structures.")
-            self._save_ts_for_restart(db.Label.TS_OPTIMIZED)
+            sys.stderr.write(self.name + ": IRC forward and backward have identical structures.")
+            self._save_ts_for_restart(db.Label.TS_OPTIMIZED, tsopt_task_name)
             return None, None
 
         def no_match() -> Tuple[List[str], bool]:
@@ -1307,6 +1337,7 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             self.products_component_map = self._component_maps[inputs[0]]
             # Trigger to set 'start_names' as 'backward_names'
             self.no_irc_structure_matches_start = True
+            assert forward_names
             return forward_names, False
 
         compare_decision_lists = True
@@ -1421,11 +1452,10 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
                 self.rhs_complexation = True
             else:
                 self.lhs_complexation = True
-
         return product_names, start_names
 
     @is_configured
-    def _save_ts_for_restart(self, ts_label: db.Label) -> None:
+    def _save_ts_for_restart(self, ts_label: db.Label, tsopt_task_name: str) -> None:
         """
         Saves the output system of 'tsopt' (hence must already be finished)
         as a restart information after some additional single points.
@@ -1434,7 +1464,7 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         -----
         * Requires run configuration
         """
-        ts_name = self.output("tsopt")[0]
+        ts_name = self.output(tsopt_task_name)[0]
         # do propensity single_points for TS and save data
         _, ts = self._store_ts_with_propensity_info(ts_name, None, ts_label)
         self._calculation.set_restart_information("TS", ts.id())
@@ -1491,37 +1521,38 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
                 for pos, e in zip(trj, energies):
                     mep.push_back(pos, e)
 
-        def file_name_from_dir_name(dir_name: str, is_irc: bool) -> str:
+        def file_name_from_dir_name(dir_name: str, is_irc: bool, reverse: bool) -> str:
             if is_irc:
+                step_direction = "backward" if reverse else "forward"
                 return os.path.join(
-                    self.work_dir, f"{dir_name}", f"{dir_name}.irc.{dir_name.split('_')[-1]}.trj.xyz"
+                    self.work_dir, f"{dir_name}", f"{dir_name}.irc.{step_direction}.trj.xyz"
                 )
             return os.path.join(
                 self.work_dir, f"{dir_name}", f"{dir_name}.opt.trj.xyz"
             )
-
         # we now combine ircopt backward - irc backward - ts - irc forward - ircopt forward
         # and we reverse the backward trajectories
-        fpath = file_name_from_dir_name(backward_dir, is_irc=False)
+        fpath = file_name_from_dir_name(backward_dir, is_irc=False, reverse=self.step_direction == "forward")
         if os.path.isfile(fpath):
             add_file_to_mep(fpath, read_in_reversed=True)
 
-        fpath = file_name_from_dir_name(backward_dir, is_irc=True)
+        fpath = file_name_from_dir_name(backward_dir, is_irc=True, reverse=self.step_direction == "forward")
         if os.path.isfile(fpath):
             add_file_to_mep(fpath, read_in_reversed=True)
         else:
+            print([s for s in os.walk(os.path.join(self.work_dir, f"{backward_dir}"))])
             self.raise_named_exception(f"Missing IRC trajectory file: {fpath}")
 
         ts_index = mep.size()
         mep.push_back(ts_calc.structure.positions, ts_energy)
 
-        fpath = file_name_from_dir_name(forward_dir, is_irc=True)
+        fpath = file_name_from_dir_name(forward_dir, is_irc=True, reverse=self.step_direction == "backward")
         if os.path.isfile(fpath):
             add_file_to_mep(fpath)
         else:
             self.raise_named_exception(f"Missing IRC trajectory file: {fpath}")
 
-        fpath = file_name_from_dir_name(forward_dir, is_irc=False)
+        fpath = file_name_from_dir_name(forward_dir, is_irc=False, reverse=self.step_direction == "backward")
         if os.path.isfile(fpath):
             add_file_to_mep(fpath)
 
@@ -1579,7 +1610,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             start_structure_names: List[str],
             program_helper: Union[ProgramHelper, None],
             tsopt_task_name: str,
-            start_structures: Optional[List[db.ID]] = None
+            irc_task_name: str,
+            start_structures: Optional[List[db.ID]] = None,
     ):
         """
         Store the new start systems in the database.
@@ -1596,6 +1628,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             The ProgramHelper which might also want to do postprocessing
         tsopt_task_name : str
             The name of the task where the TS was output
+        irc_task_name : str
+            The name of the IRC task
         start_structures : Optional[List[db.ID]]
             Optional list of the starting structure ids. If no list is given. The input
             structures of the calculation are used.
@@ -1611,9 +1645,9 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             start_structures = self._calculation.get_structures()
         # get start name
         if self.step_direction == "forward":
-            start_name = self.output("irc")[1]
+            start_name = self.output(irc_task_name)[1]
         elif self.step_direction == "backward":
-            start_name = self.output("irc")[0]
+            start_name = self.output(irc_task_name)[0]
         else:
             self.raise_named_exception("Could not determine elementary step direction.")
             return  # unreachable, just for linter
@@ -1639,8 +1673,9 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             self.config,
         )
 
-        start_structure_ids = []
-        for i, name in enumerate(start_structure_names):
+        unique_names, index_map = np.unique(start_structure_names, return_inverse=True)
+        unique_start_structure_ids = []
+        for i, name in enumerate(unique_names):
             surface_indices = split_surfaces_indices[i] if split_surfaces_indices is not None else None
             # Check if the new structures are actually duplicates
             duplicate: Optional[db.ID] = None
@@ -1675,11 +1710,11 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
                 if duplicate is not None:
                     break
             if duplicate is not None:
-                start_structure_ids.append(duplicate)
+                unique_start_structure_ids.append(duplicate)
                 continue
 
             label = self._determine_new_label_based_on_graph_and_surface_indices(graph, surface_indices)
-            new_structure = self.create_new_structure(self.systems[name], label)
+            new_structure = self.create_new_structure(self.get_system(name), label)
             for initial_id in start_structures:
                 initial_structure = db.Structure(initial_id, self._structures)
                 if not initial_structure.has_graph('masm_cbor_graph'):
@@ -1694,9 +1729,13 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             bond_orders, self.systems = self.make_bond_orders_from_calc(self.systems, name, surface_indices)
             self.store_energy(self.get_system(name), new_structure)
             self.store_bond_orders(bond_orders, new_structure)
+            if self._is_qmmm_calculation:
+                self.store_qm_atoms([i for i in range(0, self.get_system(name).structure.size())],
+                                    new_structure)
             self.add_graph(new_structure, bond_orders, surface_indices)
-            start_structure_ids.append(new_structure.id())
-        return start_structure_ids
+            unique_start_structure_ids.append(new_structure.id())
+
+        return [unique_start_structure_ids[i] for i in index_map]
 
     @requires("database")
     def save_barrierless_reaction_from_rcopt(self, product_graph: str, program_helper: Optional[ProgramHelper]) -> None:
@@ -1707,7 +1746,6 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         print(self.start_graph)
         print("Barrierless Reaction Found")
         db_results = self._calculation.get_results()
-        db_results.clear()
         # Save RHS of barrierless step
         rhs_complex_id = self._save_complex_to_db(self.rc_opt_system_name, program_helper)
         db_results.add_structure(rhs_complex_id)
@@ -1743,15 +1781,19 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         complex_structure_id : db.ID
             The id of the added structure
         """
-        complex_system = self.systems[complex_name]
-        complex_graph, self.systems = self.make_graph_from_calc(self.systems, complex_name)
+        complex_key = [key for key in self.systems.keys() if complex_name in key.lower()][0]
+        complex_system = self.get_system(complex_key)
+        complex_graph, self.systems = self.make_graph_from_calc(self.systems, complex_key)
         structure_label = self._determine_new_label_based_on_graph(complex_system, complex_graph)
         complex_structure = self.create_new_structure(complex_system, structure_label)
-        bond_orders, self.systems = self.make_bond_orders_from_calc(self.systems, complex_name)
+
+        bond_orders, self.systems = self.make_bond_orders_from_calc(self.systems, complex_key)
         if self.ref_structure is not None:
             self.transfer_properties(self.ref_structure, complex_structure)
-        self.store_energy(self.get_system(complex_name), complex_structure)
+        self.store_energy(self.get_system(complex_key), complex_structure)
         self.store_bond_orders(bond_orders, complex_structure)
+        if self._is_qmmm_calculation:
+            self.store_qm_atoms(cast(List[int], self.get_system(complex_key).settings["qm_atoms"]), complex_structure)
         self.add_graph(complex_structure, bond_orders)
         if program_helper is not None and self.ref_structure is not None:
             program_helper.calculation_postprocessing(self._calculation, self.ref_structure, complex_structure)
@@ -1763,7 +1805,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         product_names: List[str],
         program_helper: Union[ProgramHelper, None],
         tsopt_task_name: str,
-        reactant_structure_ids: List[db.ID]
+        reactant_structure_ids: List[db.ID],
+        irc_task_name: str
     ) -> Tuple[List[db.ID], List[db.ID], db.ElementaryStep]:
         """
         Carries out a verification protocol after the calculation context has been closed, clears database result
@@ -1782,9 +1825,12 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         program_helper : Union[ProgramHelper, None]
             The ProgramHelper which might also want to do postprocessing
         tsopt_task_name : str
-            The name of the task where the TS was output
+            Name of the TS optimization task whose output is used for processing of the elementary step.
         reactant_structure_ids : List[scine_database.ID]
             A list of all structure IDs for the reactants.
+        irc_task_name : str
+            Name of the IRC task. For example when performing a model switch,
+            separate tasks are set up with either the ``cheap`` or the ``expensive`` model.
         """
         from scine_puffin.utilities.reaction_transfer_helper import ReactionTransferHelper
 
@@ -1792,10 +1838,7 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             # should not be reachable
             self.raise_named_exception("Uncaught error in product calculation(s)")
 
-        # clear existing results
         db_results = self._calculation.get_results()
-        db_results.clear()
-        self._calculation.set_results(db_results)
 
         # calculation is safe to be complete -> update model
         # do this with TS system, because we want a calculator that captures the whole system
@@ -1807,7 +1850,10 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         )
 
         """ Save products """
-        new_labels = self._determine_product_labels_of_single_compounds(product_names)
+        # NOTE: only store unique products
+        unique_end_structures = []
+        unique_product_names, index_map = np.unique(product_names, return_inverse=True)
+        new_labels = self._determine_product_labels_of_single_compounds(list(unique_product_names))
         # check for surface indices
         assert self.products_component_map is not None
         all_indices = self.surface_indices_all_structures(self._calculation.get_structures())
@@ -1816,16 +1862,20 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
                 all_indices, self.products_component_map)
 
         end_structures = []
-        single_molecule_mode: bool = len(product_names) == 1 and len(self._calculation.get_structures()) == 1 and \
+        single_molecule_mode: bool = len(unique_product_names) == 1 and \
+            len(self._calculation.get_structures()) == 1 and \
             not self.settings[self.propensity_key]["check_for_unimolecular_reaction"]
-        for i, (label, product) in enumerate(zip(new_labels, product_names)):
+        for i, (label, product) in enumerate(zip(new_labels, unique_product_names)):
             surface_indices = split_surfaces_indices[i]
             new_structure = self._store_structure_with_propensity_check(product, self.systems, label,
                                                                         enforce_to_save_base_name=single_molecule_mode,
-                                                                        surface_indices=surface_indices)
+                                                                        surface_indices=surface_indices,
+                                                                        is_qmmm=self._is_qmmm_calculation)
             if program_helper is not None and self.ref_structure is not None:
                 program_helper.calculation_postprocessing(self._calculation, self.ref_structure, new_structure)
-            end_structures.append(new_structure.id())
+            unique_end_structures.append(new_structure.id())
+
+        end_structures = [unique_end_structures[i] for i in index_map]
         """ transfer properties to products which requires to pass all structures"""
         transfer_helper = ReactionTransferHelper(self, self._properties)
         start_structures = [db.Structure(sid, self._structures) for sid in self._calculation.get_structures()
@@ -1837,22 +1887,21 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         ts_name = self.output(tsopt_task_name)[0]
         # do propensity single_points for TS and save data
         ts_calc, new_ts = self._store_ts_with_propensity_info(ts_name, program_helper, db.Label.TS_OPTIMIZED)
-
         """ Save Complexes """
         if self.lhs_barrierless_reaction or self.lhs_complexation:
             if self.lhs_barrierless_reaction:
                 lhs_complex_label = self.rc_opt_system_name
             elif self.step_direction == "forward":
-                lhs_complex_label = "irc_backward"
+                lhs_complex_label = self.output(irc_task_name)[1]
             else:
-                lhs_complex_label = "irc_forward"
+                lhs_complex_label = self.output(irc_task_name)[0]
             lhs_complex_id = self._save_complex_to_db(lhs_complex_label, program_helper)
             db_results.add_structure(lhs_complex_id)
         if self.rhs_complexation:
-            rhs_complex_label = "irc_forward" if self.step_direction == "forward" else "irc_backward"
+            rhs_complex_label = self.output(irc_task_name)[0] if self.step_direction == "forward" \
+                else self.output(irc_task_name)[1]
             rhs_complex_id = self._save_complex_to_db(rhs_complex_label, program_helper)
             db_results.add_structure(rhs_complex_id)
-
         """ Save Steps """
         main_step_lhs = [rsid for rsid in reactant_structure_ids
                          if db.Structure(rsid, self._structures).get_label() != db.Label.SURFACE_ADSORPTION_GUESS]
@@ -1877,37 +1926,42 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         new_step.set_type(db.ElementaryStepType.REGULAR)
         new_step.set_transition_state(new_ts.id())
         db_results.add_elementary_step(new_step.id())
-
         """ Save Reaction Path as a Spline"""
         try:
-            trajectory, ts_index = self.read_irc_and_irc_opt_trajectories(tsopt_task_name, "irc")
+            trajectory, ts_index = self.read_irc_and_irc_opt_trajectories(
+                tsopt_task_name, irc_task_name)
             spline = self.generate_spline(trajectory, ts_index)
             new_step.set_spline(spline)
             """ Save Reaction Path """
             if self.settings[self.job_key]["store_full_mep"]:
                 charge = self.get_charge(ts_calc)
                 multiplicity = self.get_multiplicity(ts_calc)
-                model = self._calculation.get_model()
+                model = self.get_model()
                 self.save_mep_in_db(new_step, trajectory, ts_index, charge, multiplicity, model)
         except BaseException as e:
             # If the spline generation crashes we need to continue,
             # otherwise the database is in a broken state.
             # For now, just do not add a spline.
-            print("Failed to generate spline interpolation for the reaction, continuing without adding the spline to"
-                  " the database. The error was:\n", e)
+            print("Failed to generate spline interpolation for the reaction, continuing without adding the spline to "
+                  "the database. The error was:\n", e)
         """ Save new starting materials if there are any"""
         original_start_structures = self._calculation.get_structures()
         for rid in reactant_structure_ids:
             if rid not in original_start_structures:
                 # TODO should duplicates be removed here?
+                # NOTE: Results are missing the properties of the original start structures
                 db_results.add_structure(rid)
         # intermediate function may have written directly to calculation
         # results, therefore add to already existing
         self._calculation.set_results(self._calculation.get_results() + db_results)
         return main_step_lhs, main_step_rhs, new_step
 
-    def _store_ts_with_propensity_info(self, ts_name: str, program_helper: Optional[ProgramHelper],
-                                       ts_label: db.Label) -> Tuple[utils.core.Calculator, db.Structure]:
+    def _store_ts_with_propensity_info(self,
+                                       ts_name: str,
+                                       program_helper: Optional[ProgramHelper],
+                                       ts_label: db.Label,
+                                       store_hessian: bool = True) -> Tuple[utils.core.Calculator,
+                                                                            db.Structure]:
         # do propensity single_points for TS
         self.systems = self._add_propensity_systems(ts_name, self.systems)
         self.systems = self._spin_propensity_single_points(
@@ -1918,12 +1972,16 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             "This points to a SCINE calculator error."
         )
         new_ts = self._store_structure_with_propensity_check(ts_name, self.systems, ts_label,
-                                                             enforce_to_save_base_name=True)
+                                                             enforce_to_save_base_name=True,
+                                                             is_qmmm=self._is_qmmm_calculation)
+
         if self.ref_structure is not None:
             self.transfer_properties(self.ref_structure, new_ts)
         ts_calc = self.get_system(ts_name)
-        if ts_label == db.Label.TS_OPTIMIZED or ts_calc.get_results().hessian is not None:
+        if store_hessian and (ts_label == db.Label.TS_OPTIMIZED or ts_calc.get_results(
+        ).hessian is not None or ts_calc.get_results().partial_hessian is not None):
             self.store_hessian_data(ts_calc, new_ts)
+
         if program_helper is not None and self.ref_structure is not None:
             program_helper.calculation_postprocessing(self._calculation, self.ref_structure, new_ts)
         return ts_calc, new_ts
@@ -2134,7 +2192,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
 
     @requires("database")
     @is_configured
-    def _hess_irc_ircopt(self, ts_system_name: str, settings_manager: SettingsManager) \
+    def _hess_irc_ircopt(self, ts_system_name: str, settings_manager: SettingsManager,
+                         irc_sanity_settings_manager: Union[None, SettingsManager] = None) \
             -> Tuple[List[str], Optional[List[str]]]:
         """
         Takes an optimized TS and carries out:
@@ -2148,7 +2207,9 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         ts_system_name : str
             The name of the system holding the optimized TS
         settings_manager : SettingsManager
-            The settings manager
+            The settings manager.
+        irc_sanity_settings_manager : Union[None, SettingsManager]
+            The settings manager for the IRC sanity checks.
 
         Returns
         -------
@@ -2169,7 +2230,7 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         )
 
         if self.n_imag_frequencies(inputs[0]) != 1:
-            self._save_ts_for_restart(db.Label.TS_GUESS)
+            self._save_ts_for_restart(db.Label.TS_GUESS, "tsopt")
             self.raise_named_exception(f"Error: {self.name} failed with message: "
                                        f"TS has incorrect number of imaginary frequencies.")
 
@@ -2197,8 +2258,19 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
 
         """ Check whether we have a valid IRC """
         initial_charge = settings_manager.calculator_settings[utils.settings_names.molecular_charge]
+
+        if irc_sanity_settings_manager is None:
+            irc_sanity_calc_settings = settings_manager.calculator_settings
+            qm_method_family = None
+        elif irc_sanity_settings_manager.calculator_settings is not None and self._is_qmmm_calculation:
+            irc_sanity_calc_settings = irc_sanity_settings_manager.calculator_settings
+            qm_method_family = self.get_model().method_family.split("/")[0]
+        else:
+            irc_sanity_calc_settings = irc_sanity_settings_manager.calculator_settings
+            qm_method_family = None
+
         product_names, start_names = self.irc_sanity_checks_and_analyze_sides(
-            initial_charge, self.check_charges, inputs, settings_manager.calculator_settings)
+            initial_charge, self.check_charges, inputs, irc_sanity_calc_settings, "tsopt", qm_method_family)
         if product_names is None:  # IRC did not pass checks, reason has been set as comment, complete job
             self.verify_connection()
             self.capture_raw_output()
@@ -2212,7 +2284,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
 
     @requires("database")
     @is_configured
-    def _tsopt_hess_irc_ircopt(self, tsguess_system_name: str, settings_manager: SettingsManager) \
+    def _tsopt_hess_irc_ircopt(self, tsguess_system_name: str, settings_manager: SettingsManager,
+                               irc_sanity_settings_manager: Union[None, SettingsManager] = None) \
             -> Tuple[List[str], Optional[List[str]]]:
         """
         Takes a TS guess and carries out:
@@ -2231,6 +2304,8 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             The name of the system holding the TS guess
         settings_manager : SettingsManager
             The settings manager
+        irc_sanity_settings_manager : Union[None, SettingsManager]
+            The settings manager for the IRC sanity checks.
 
         Returns
         -------
@@ -2240,6 +2315,7 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             The names of the start structures, if different to the structures of the react job
         """
         inputs = [tsguess_system_name]
+        """ TSOPT JOB """
         self.setup_automatic_mode_selection("tsopt")
         print("TSOpt Settings:")
         print(self.settings["tsopt"], "\n")
@@ -2252,10 +2328,12 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             ["energy"],
             "TS optimization failed:\n",
         )
-        return self._hess_irc_ircopt(self.output("tsopt")[0], settings_manager)
+
+        return self._hess_irc_ircopt(self.output("tsopt")[0], settings_manager, irc_sanity_settings_manager)
 
     def _tsopt_hess_irc_ircopt_postprocessing(self, tsguess_system_name: str, settings_manager: SettingsManager,
-                                              program_helper: Optional[ProgramHelper]) -> None:
+                                              program_helper: Optional[ProgramHelper],
+                                              irc_sanity_settings_manager: Optional[SettingsManager] = None) -> None:
         """
         Takes a TS guess and carries out:
         * TS optimization
@@ -2277,8 +2355,11 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
             The settings manager
         program_helper : Optional[ProgramHelper]
             The program helper
+        irc_sanity_settings_manager : Optional[SettingsManager]
+            The settings manager for the IRC sanity checks.
         """
-        product_names, start_names = self._tsopt_hess_irc_ircopt(tsguess_system_name, settings_manager)
+        product_names, start_names = self._tsopt_hess_irc_ircopt(tsguess_system_name, settings_manager,
+                                                                 irc_sanity_settings_manager)
         self._postprocessing_with_conformer_handling(product_names, start_names, program_helper)
 
     def _postprocessing_with_conformer_handling(self, product_names: List[str], start_names: Optional[List],
@@ -2296,15 +2377,20 @@ class ReactJob(ScinePropensityJob, OptimizationJob, HessianJob, ABC):
         program_helper : Optional[ProgramHelper]
             The program helper
         """
-
         """ Store new starting material conformer(s) """
         if start_names is not None:
             start_structures = self.store_start_structures(
-                start_names, program_helper, "tsopt")
+                start_names, program_helper, "tsopt", "irc")
         else:
             start_structures = self._calculation.get_structures()
 
-        self.react_postprocessing(product_names, program_helper, "tsopt", start_structures)
+        self.react_postprocessing(
+            product_names,
+            program_helper,
+            "tsopt",
+            start_structures,
+            "irc"
+        )
 
     def get_system(self, name: str) -> utils.core.Calculator:
         """

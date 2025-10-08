@@ -166,7 +166,7 @@ class ScineReactComplexNt2ObserverTests(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 11
+        assert len(results.property_ids) == 15
         # Structure counts: (complex + TS + product) + re-optimized reactants (x2)
         assert len(results.structure_ids) == 3 + 2
         assert len(results.elementary_step_ids) == 2

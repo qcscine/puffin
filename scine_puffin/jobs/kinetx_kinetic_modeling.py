@@ -212,8 +212,20 @@ class KinetxKineticModeling(KineticModelingJob):
             lhs_rates = [lhs_rates_per_reaction[i]]
             rhs_rates = [rhs_rates_per_reaction[i]]
             lhs_rhs_compound_or_flask_ids = reaction.get_reactants(db.Side.BOTH)
-            lhs_stoichiometry = [(aggregate_id_list.index(c_id), 1) for c_id in lhs_rhs_compound_or_flask_ids[0]]
-            rhs_stoichiometry = [(aggregate_id_list.index(c_id), 1) for c_id in lhs_rhs_compound_or_flask_ids[1]]
+            lhs_stoichiometry = [
+                (
+                    aggregate_id_list.index(c_id),
+                    lhs_rhs_compound_or_flask_ids[0].count(c_id),
+                )
+                for c_id in list(set(lhs_rhs_compound_or_flask_ids[0]))
+            ]
+            rhs_stoichiometry = [
+                (
+                    aggregate_id_list.index(c_id),
+                    lhs_rhs_compound_or_flask_ids[1].count(c_id),
+                )
+                for c_id in list(set(lhs_rhs_compound_or_flask_ids[1]))
+            ]
             self.check_mass_balance(lhs_stoichiometry, rhs_stoichiometry, aggregate_id_list, aggregate_type_list)
             network_builder.add_reaction(lhs_rates, rhs_rates, lhs_stoichiometry, rhs_stoichiometry)
 

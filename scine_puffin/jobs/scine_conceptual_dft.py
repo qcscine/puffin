@@ -183,10 +183,6 @@ class ScineConceptualDft(ScineJob):
 
             # Calculation postprocessing
             self.verify_connection()
-            # clear existing results
-            db_results = self._calculation.get_results()
-            db_results.clear()
-            self._calculation.set_results(db_results)
             # update model
             scine_helper.update_model(self.get_calc(keys[0], systems), self._calculation, self.config)
 

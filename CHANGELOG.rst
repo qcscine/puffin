@@ -1,6 +1,28 @@
 Changelog
 =========
 
+Release 2.1.0
+-------------
+
+New Jobs:
+    - Job that tries to find a new reaction with active involvement of solvent molecules with the help of QM/MM.
+    - Hamiltonian generation for Huzinaga-type DFT embedding (including QM/MM support).
+
+New Features:
+    - DFTB+ is available as a program
+    - The `scine_dissociation_cut` has a new setting (`additional_nt_run_dissociation_energy_limit`) that lets one set a dissociation energy limit below which every dissociation that cannot be confirmed to be a barrierless reaction is additionally searched for a transition state by an associative NT2 reaction search protocol started from a reactive complex assembled from the dissociated fragments.
+    - Allow different settings for the IRC sanity check in our `scine_react` jobs.
+    - Add a Swoose helper to combine SFAM parameters and determine sphere-based QM regions for non-covalently bound systems.
+    - The `rms_kinetic_modeling` job now accepts a list of booleans `reversible_reactions` in its settings to signal which reactions are reversible. If not given, all reactions are assumed to be reversible.
+    - Parameters are not analyzed for their sensitivity indices during kinetic modeling if their uncertainty is zero.
+    - Allows jobs to require additional programs based on the given settings.
+    - Atomic charges and atom types can be forwarded to Swoose for QM/MM calculations.
+    - Partial energies and partial gradients are now stored if available after running a `scine_single_point` job.
+    - The energy criterion for saving weakly interacting complexes in `scine_react_complex` jobs is now a setting.
+
+Technical changes:
+    - Removed versioneer
+
 Release 2.0.0
 -------------
 

@@ -7,7 +7,7 @@ See LICENSE.txt for details.
 
 import os
 import json
-from typing import List
+from typing import List, Optional
 
 from ..testcases import (
     JobTestCase,
@@ -38,7 +38,8 @@ class ScineReactDissociationCutJobTest(JobTestCase):
 
     def _setup_and_execute(self, dissociations: List[int], charge_propensity_check: int,
                            charge: int = 0, multiplicity: int = 1, with_opt: bool = False,
-                           system_name: str = "butane"):
+                           system_name: str = "butane", additional_settings: Optional[dict] = None,
+                           model=None):
         from scine_puffin.jobs.scine_dissociation_cut import ScineDissociationCut
         from scine_puffin.jobs.scine_dissociation_cut_with_optimization import ScineDissociationCutWithOptimization
         import scine_database as db
@@ -48,13 +49,14 @@ class ScineReactDissociationCutJobTest(JobTestCase):
             reactant_path = os.path.join(resource_path(), f"{system_name}.xyz")
             if not os.path.exists(reactant_path):
                 raise FileNotFoundError(f"Could not find {system_name}.mol or {system_name}.xyz in {resource_path()}")
-        reactant_guess = add_structure(self.manager, reactant_path, db.Label.MINIMUM_OPTIMIZED,
+        reactant_guess = add_structure(self.manager, reactant_path, db.Label.MINIMUM_OPTIMIZED, model=model,
                                        charge=charge, multiplicity=multiplicity)
         graph = json.load(open(os.path.join(resource_path(), f"{system_name}.json"), "r"))
         for key, value in graph.items():
             reactant_guess.set_graph(key, value)
 
-        model = db.Model('dftb3', 'dftb3', '') if not with_opt else db.Model('pm6', 'pm6', '')
+        if model is None:
+            model = db.Model('dftb3', 'dftb3', '') if not with_opt else db.Model('pm6', 'pm6', '')
         db_job = db.Job('scine_dissociation_cut') if not with_opt \
             else db.Job('scine_dissociation_cut_with_optimization')
         settings = {
@@ -62,6 +64,8 @@ class ScineReactDissociationCutJobTest(JobTestCase):
             "charge_propensity_check": charge_propensity_check,
             "max_scf_iterations": 1000,
         }
+        if additional_settings is not None:
+            settings.update(additional_settings)
 
         calculation = add_calculation(self.manager, model, db_job, [reactant_guess.id()], settings)
 
@@ -257,3 +261,121 @@ class ScineReactDissociationCutJobTest(JobTestCase):
                                for p in reactants[1]) - self._e_help(reactants[0][0])) * utils.KJPERMOL_PER_HARTREE
         ref = 542.5066448245391
         self.assertAlmostEqual(reaction_energy, ref, delta=1)
+
+    @skip_without('database', 'readuct', 'molassembler')
+    def test_with_additional_nt_run(self):
+        import scine_database as db
+        import scine_molassembler as masm
+
+        success_result = json.load(open(os.path.join(resource_path(), "mn_result.json"), "r"))
+        success_result_2 = json.load(open(os.path.join(resource_path(), "mn_result_2.json"), "r"))
+        model = db.Model("pm6", "pm6", "")
+        model.program = "sparrow"
+        model.spin_mode = "unrestricted"
+        for energy_limit, expected_success in zip([0.0, 5.0, 100.0], [False, False, True]):
+            settings = {
+                "additional_nt_run_dissociation_energy_limit": energy_limit,
+                "imaginary_wavenumber_threshold": -25.0,
+                "max_scf_iterations": 1000,
+                "nt_convergence_max_iterations": 600,
+                "nt_nt_filter_passes": 10,
+                "nt_nt_fixed_number_of_micro_cycles": True,
+                "nt_nt_number_of_micro_cycles": 10,
+                "nt_nt_total_force_norm": 0.1,
+                "nt_nt_use_micro_cycles": True,
+                "nt_sd_factor": 1.0,
+                "tsopt_dimer_trust_radius": 0.2,
+                "tsopt_dimer_calculate_hessian_once": True,
+                "tsopt_convergence_delta_value": 1.0e-06,
+                "tsopt_convergence_gradient_max_coefficient": 0.0002,
+                "tsopt_convergence_gradient_rms": 0.0001,
+                "tsopt_convergence_max_iterations": 1000,
+                "tsopt_convergence_requirement": 3,
+                "tsopt_convergence_step_max_coefficient": 0.002,
+                "tsopt_convergence_step_rms": 0.001,
+                "tsopt_geoopt_coordinate_system": "cartesianWithoutRotTrans",
+                "tsopt_optimizer": "dimer",
+                "irc_convergence_delta_value": 1.0e-06,
+                "irc_convergence_gradient_max_coefficient": 0.0002,
+                "irc_convergence_gradient_rms": 0.0001,
+                "irc_convergence_max_iterations": 100,
+                "irc_convergence_step_max_coefficient": 0.002,
+                "irc_convergence_step_rms": 0.001,
+                "irc_irc_coordinate_system": "cartesianWithoutRotTrans",
+                "irc_irc_initial_step_size": 0.3,
+                "irc_sd_factor": 2.0,
+                "ircopt_bfgs_trust_radius": 0.2,
+                "ircopt_bfgs_use_trust_radius": True,
+                "ircopt_convergence_delta_value": 1.0e-06,
+                "ircopt_convergence_gradient_max_coefficient": 0.0002,
+                "ircopt_convergence_gradient_rms": 0.0001,
+                "ircopt_convergence_max_iterations": 1000,
+                "ircopt_convergence_requirement": 3,
+                "ircopt_convergence_step_max_coefficient": 0.002,
+                "ircopt_convergence_step_rms": 0.001,
+                "ircopt_geoopt_coordinate_system": "cartesianWithoutRotTrans",
+                "opt_bfgs_trust_radius": 0.2,
+                "opt_bfgs_use_trust_radius": True,
+                "opt_convergence_delta_value": 1.0e-06,
+                "opt_convergence_gradient_max_coefficient": 0.0002,
+                "opt_convergence_gradient_rms": 0.0001,
+                "opt_convergence_max_iterations": 1000,
+                "opt_convergence_requirement": 3,
+                "opt_convergence_step_max_coefficient": 0.002,
+                "opt_convergence_step_rms": 0.001,
+                "opt_geoopt_coordinate_system": "cartesianWithoutRotTrans",
+                "rcopt_bfgs_trust_radius": 0.2,
+                "rcopt_bfgs_use_trust_radius": True,
+                "rcopt_convergence_delta_value": 1.0e-06,
+                "rcopt_convergence_gradient_max_coefficient": 0.0002,
+                "rcopt_convergence_gradient_rms": 0.0001,
+                "rcopt_convergence_max_iterations": 1000,
+                "rcopt_convergence_requirement": 3,
+                "rcopt_convergence_step_max_coefficient": 0.002,
+                "rcopt_convergence_step_rms": 0.001,
+                "rcopt_geoopt_coordinate_system": "cartesianWithoutRotTrans"
+            }
+            calculation = self._setup_and_execute([1, 9, 9, 23], 1,
+                                                  charge=1,
+                                                  multiplicity=1,
+                                                  with_opt=False,
+                                                  system_name="mn_catalyst",
+                                                  additional_settings=settings,
+                                                  model=model)
+            # Check results
+            structures = self.manager.get_collection("structures")
+            elementary_steps = self.manager.get_collection("elementary_steps")
+            assert calculation.get_model() == model
+            assert calculation.get_status() == db.Status.COMPLETE
+            assert len(calculation.get_results().elementary_step_ids) == int(expected_success)
+            if expected_success:
+                step = db.ElementaryStep(calculation.get_results().elementary_step_ids[0], elementary_steps)
+                assert step.get_type() == db.ElementaryStepType.REGULAR
+                reactants, products = step.get_reactants(db.Side.BOTH)
+
+                assert len(reactants) == 1 and len(products) == 2 or len(products) == 1 and len(reactants) == 2
+                if len(reactants) == 1:
+                    result_structure = db.Structure(reactants[0], structures)
+                    # other side contains ethene
+                    assert any(len(db.Structure(sid, structures).get_atoms()) == 6 for sid in products)
+                else:
+                    result_structure = db.Structure(products[0], structures)
+                    # other side contains ethene
+                    assert any(len(db.Structure(sid, structures).get_atoms()) == 6 for sid in reactants)
+
+                result = {
+                    "masm_cbor_graph": result_structure.get_graph("masm_cbor_graph"),
+                    "masm_decision_list": result_structure.get_graph("masm_decision_list"),
+                    "masm_idx_map": result_structure.get_graph("masm_idx_map"),
+                }
+                # The unit test is unstable and may converge to slightly different geometries which are resolved to
+                # a seesaw or tetrahedron configuration at the Mn center.
+                assert any(masm.JsonSerialization.equal_molecules(
+                    res["masm_cbor_graph"],
+                    result["masm_cbor_graph"]
+                ) for res in [success_result, success_result_2])
+                assert any(masm.JsonSerialization.equal_decision_lists(
+                    res["masm_decision_list"],
+                    result["masm_decision_list"]
+                ) for res in [success_result, success_result_2])
+                assert any(res["masm_idx_map"] == result["masm_idx_map"] for res in [success_result, success_result_2])

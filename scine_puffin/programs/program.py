@@ -106,7 +106,7 @@ class Program:
         if os.path.exists(repo_dir):
             repository = git.Repo(repo_dir)
             try:
-                repository.remotes.origin.pull()
+                repository.remotes.origin.pull(all=True)
                 repository.git.submodule("update", "--init")
             except BaseException:
                 try:
@@ -118,7 +118,8 @@ class Program:
                 repository.git.submodule("update", "--init")
             finally:
                 repository.git.checkout(self.version)
-                repository.remotes.origin.pull()
+                if not repository.head.is_detached:
+                    repository.remotes.origin.pull()
                 repository.git.submodule("update", "--init")
         else:
             repository = git.Repo.clone_from(self.source, repo_dir)
@@ -196,7 +197,7 @@ class Program:
         os.chdir(initial_dir)
 
     @staticmethod
-    def pip_package_install(package: str, install_dir: str):
+    def pip_package_install(package: str, install_dir: str, version: str = ""):
         env = os.environ.copy()
         suffix = (
             'python' + str(sys.version_info.major) + '.' +
@@ -213,6 +214,7 @@ class Program:
                 os.path.join(install_dir, 'lib', suffix) +
                 ":" + os.path.join(install_dir, 'lib64', suffix)
             )
+        package = package + "==" + version if version else package
         subprocess.run(
             [
                 sys.executable, '-m' + 'pip', 'install', package,

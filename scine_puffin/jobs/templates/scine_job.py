@@ -92,7 +92,7 @@ class ScineJob(Job, ABC):
         helper_tuple : Tuple[SettingsManager, Optional[ProgramHelper]
             A tuple of the SettingsManager for Scine Calculators and ProgramHelper if available.
         """
-        model = self._calculation.get_model()
+        model = self.get_model()
         program = model.program if model.program.lower() != "any" else ""
         settings_manager = SettingsManager(model.method_family, program)
         program_helper = ProgramHelper.get_correct_helper(program, self._manager, structure, self._calculation)
@@ -188,10 +188,7 @@ class ScineJob(Job, ABC):
         update_model(
             self.get_calc(keys[0], systems), self._calculation, self.config
         )  # calculation is safe -> update model
-        db_results = self._calculation.get_results()
-        db_results.clear()
-        self._calculation.set_results(db_results)
-        return db_results
+        return self._calculation.get_results()
 
     @is_configured
     def prepend_to_comment(self, message: str) -> None:
@@ -282,7 +279,7 @@ class ScineJob(Job, ABC):
             "electronic_energy",
             "NumberProperty",
             system.get_results().energy,
-            self._calculation.get_model(),
+            self.get_model(),
             self._calculation,
             structure,
         )
@@ -294,6 +291,18 @@ class ScineJob(Job, ABC):
             "bond_orders",
             "SparseMatrixProperty",
             bond_orders.matrix,
+            self.get_model(),
+            self._calculation,
+            structure,
+        )
+
+    @is_configured
+    def store_qm_atoms(self, qm_atoms: List[int], structure: db.Structure) -> None:
+        self.store_property(
+            self._properties,
+            "qm_atoms",
+            "VectorProperty",
+            qm_atoms,
             self._calculation.get_model(),
             self._calculation,
             structure,
@@ -353,7 +362,6 @@ class ScineJob(Job, ABC):
             The possible ProgramHelper that may also want to do some
             postprocessing after a calculation.
         """
-
         # postprocessing of results with sanity checks
         self.calculation_postprocessing(success, systems, keys)
 
@@ -368,7 +376,7 @@ class ScineJob(Job, ABC):
                 "atomic_charges",
                 "VectorProperty",
                 results.atomic_charges,
-                self._calculation.get_model(),
+                self.get_model(),
                 self._calculation,
                 structure,
             )
@@ -382,7 +390,7 @@ class ScineJob(Job, ABC):
                 "orbital_energies",
                 "DenseMatrixProperty",
                 mat,
-                self._calculation.get_model(),
+                self.get_model(),
                 self._calculation,
                 structure,
             )
@@ -393,10 +401,34 @@ class ScineJob(Job, ABC):
                 "gradients",
                 "DenseMatrixProperty",
                 results.gradients,
-                self._calculation.get_model(),
+                self.get_model(),
                 self._calculation,
                 structure,
             )
+
+        if results.partial_energies is not None:
+            for partial_energy_name, value in results.partial_energies.items():
+                self.store_property(
+                    self._properties,
+                    partial_energy_name,
+                    "NumberProperty",
+                    value,
+                    self._calculation.get_model(),
+                    self._calculation,
+                    structure
+                )
+
+        if results.partial_gradients is not None:
+            for partial_gradient_name, value in results.partial_gradients.items():
+                self.store_property(
+                    self._properties,
+                    partial_gradient_name,
+                    "DenseMatrixProperty",
+                    value,
+                    self._calculation.get_model(),
+                    self._calculation,
+                    structure
+                )
 
         if program_helper is not None:
             program_helper.calculation_postprocessing(self._calculation, structure)
@@ -419,6 +451,10 @@ class ScineJob(Job, ABC):
         if self._calculation is None:
             self.raise_named_exception("Job is not configured and does not hold a calculation right now")
         return self._calculation
+
+    @is_configured
+    def get_model(self) -> db.Model:
+        return self._calculation.get_model()
 
     @requires("database")
     def create_new_structure(self, calculator: utils.core.Calculator, label: db.Label) -> db.Structure:
@@ -448,7 +484,7 @@ class ScineJob(Job, ABC):
             calculator.structure,
             self.get_charge(calculator),
             self.get_multiplicity(calculator),
-            self._calculation.get_model(),
+            self.get_model(),
             label,
         )
         return new_structure

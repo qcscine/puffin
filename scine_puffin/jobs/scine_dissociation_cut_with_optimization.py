@@ -91,7 +91,6 @@ class ScineDissociationCutWithOptimization(ScineDissociationCut):
                                                    self._structures)
             self.ref_structure.add_calculation(self._calculation.get_job().order, self._calculation.id())
             db_results = self._calculation.get_results()
-            db_results.clear()
             db_results.add_structure(self.ref_structure.id())
             self._calculation.set_results(db_results)
             if not masm.JsonSerialization.equal_molecules(self.start_graph, opt_graph):

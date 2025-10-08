@@ -124,7 +124,7 @@ class ScineReactComplexNt2(ReactJob):
         }
         self.settings = {
             **self.settings,
-            "nt": nt_defaults,
+            self.exploration_key: nt_defaults,
             "tsopt": tsopt_defaults,
             "irc": irc_defaults,
             "ircopt": ircopt_defaults,
@@ -140,9 +140,9 @@ class ScineReactComplexNt2(ReactJob):
 
             """ NT JOB """
             print("NT Settings:")
-            print(self.settings["nt"], "\n")
+            print(self.settings[self.exploration_key], "\n")
             self.systems, success = self.observed_readuct_call(
-                SubTaskToReaductCall.NT2, self.systems, [self.rc_key], **self.settings["nt"])
+                SubTaskToReaductCall.NT2, self.systems, [self.rc_key], **self.settings[self.exploration_key])
             if not success:
                 self.verify_connection()
                 """ Barrierless Reaction Check """
@@ -162,7 +162,7 @@ class ScineReactComplexNt2(ReactJob):
                 )
                 raise breakable.Break
 
-            tsguess_name = self.output("nt")[0]
+            tsguess_name = self.output(self.exploration_key)[0]
             try:
                 self._tsopt_hess_irc_ircopt_postprocessing(tsguess_name, settings_manager, program_helper)
             except BaseException:

@@ -164,6 +164,7 @@ class SettingsManager:
         calculation: db.Calculation,
         settings: utils.ValueCollection,
         resources: dict,
+        model: Optional[db.Model] = None
     ) -> Tuple[Dict[str, Optional[utils.core.Calculator]], List[str]]:
         """
         Constructs a dictionary with a Scine Calculator based on the calculation settings and resources to have an
@@ -179,23 +180,27 @@ class SettingsManager:
             The settings of the database calculation.
         resources : dict
             Resources of the calculator (config['resources']).
+        model : Optional[db.Model]
+            The electronic structure model. If None, the model from the calculation is used. By default, None.
 
         Returns
         -------
         Tuple[dict, List[str]]]
             A tuple containing the dictionary containing the calculator and a list containing the corresponding key
         """
+        if model is None:
+            model = calculation.get_model()
         # Separate the calculation settings from the database into the task and calculator settings
         # This overwrites any default settings by user settings
         self.separate_settings(settings)
         # Update the calculator settings
         # Warnings concerning external program resources are written into the stderr
-        self.update_calculator_settings(structure, calculation.get_model(), resources)
+        self.update_calculator_settings(structure, model, resources)
         self.correct_non_applicable_settings()
 
         utils.io.write("system.xyz", structure.get_atoms())
         system = utils.core.load_system_into_calculator(
-            "system.xyz", calculation.get_model().method_family, **self.calculator_settings
+            "system.xyz", model.method_family, **self.calculator_settings
         )
         return {"system": system}, ["system"]
 
@@ -207,6 +212,13 @@ class SettingsManager:
         # removing it ensures that Readuct receives the correct default inside the job directory
         if "base_working_directory" in self.calculator_settings:
             del self.calculator_settings["base_working_directory"]
+        # These are QM/MM specific settings telling puffin to write some specific files based on structure properties.
+        if "use_external_atom_types" in self.task_settings:
+            del self.task_settings["use_external_atom_types"]
+        if "use_xml_parameters" in self.task_settings:
+            del self.task_settings["use_xml_parameters"]
+        if "use_turbomole_mos" in self.task_settings:
+            del self.task_settings["use_turbomole_mos"]
 
 
 def update_model(

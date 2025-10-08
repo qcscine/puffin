@@ -122,7 +122,7 @@ class ScineBsplineOptimizationJobTest(JobTestCase):
         print("N-Steps", elementary_steps.count(json.dumps({})))
         assert elementary_steps.count(json.dumps({})) == 3
         results = calculation.get_results()
-        assert len(results.property_ids) == 11
+        assert len(results.property_ids) == 15
         assert len(results.structure_ids) == 5
         assert len(results.elementary_step_ids) == 2
         # The regular elementary step should be the last one in the list.

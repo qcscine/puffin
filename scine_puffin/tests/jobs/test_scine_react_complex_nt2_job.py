@@ -24,11 +24,8 @@ from ..resources import resource_path
 
 class ScineReactComplexNt2JobTest(JobTestCase):
 
-    @skip_without('database', 'readuct', 'molassembler')
-    def test_energy_and_structure(self):
+    def setup_test(self, complexation_criterion: float = -12.0 / 2625.5):
         # import Job
-        from scine_puffin.jobs.scine_react_complex_nt2 import ScineReactComplexNt2
-        from scine_puffin.utilities.masm_helper import get_molecules_result
         import scine_database as db
         import scine_utilities as utils
 
@@ -105,6 +102,7 @@ class ScineReactComplexNt2JobTest(JobTestCase):
             "opt_bfgs_use_trust_radius": True,
             "opt_bfgs_trust_radius": 0.4,
             "imaginary_wavenumber_threshold": -30,
+            "complexation_criterion": complexation_criterion,
             "nt_nt_associations": [
                 3,
                 17,
@@ -137,11 +135,22 @@ class ScineReactComplexNt2JobTest(JobTestCase):
             "rc_x_rotation": 0.0,
             "rc_x_spread": 3.48715302740618,
             "rc_displacement": 0.0,
-            "rc_minimal_spin_multiplicity": False
+            "rc_minimal_spin_multiplicity": False,
         }
 
         calculation = add_calculation(self.manager, model, job, [reactant_one_guess.id(), reactant_two_guess.id()],
                                       settings)
+        return calculation, ts_reference, product_reference
+
+    @skip_without('database', 'readuct', 'molassembler')
+    def test_energy_and_structure(self):
+        # import Job
+        from scine_puffin.jobs.scine_react_complex_nt2 import ScineReactComplexNt2
+        from scine_puffin.utilities.masm_helper import get_molecules_result
+        import scine_database as db
+        import scine_utilities as utils
+
+        calculation, ts_reference, product_reference = self.setup_test()
 
         # Run calculation/job
         config = self.get_configuration()
@@ -155,7 +164,7 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 11
+        assert len(results.property_ids) == 15
         assert len(results.structure_ids) == 3 + 2  # re-optimized reactants (x2) + complex + TS + product
         assert len(results.elementary_step_ids) == 2
         assert structures.count("{}") == 3 + 3 + 2
@@ -182,6 +191,35 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         assert fit.get_rmsd() < 1e-2
 
         fit = utils.QuaternionFit(product_reference.positions, product.get_atoms().positions)
+        assert fit.get_rmsd() < 1e-2
+
+    @skip_without('database', 'readuct', 'molassembler')
+    def test_avoid_complexation(self):
+        # import Job
+        from scine_puffin.jobs.scine_react_complex_nt2 import ScineReactComplexNt2
+        import scine_database as db
+        import scine_utilities as utils
+
+        calculation, ts_reference, _ = self.setup_test(complexation_criterion=-9999999.9)
+        settings = calculation.get_settings()
+        calculation.set_settings(settings)
+        config = self.get_configuration()
+        job = ScineReactComplexNt2()
+        job.prepare(config["daemon"]["job_dir"], calculation.id())
+        self.run_job(job, calculation, config)
+
+        assert calculation.get_status() == db.Status.COMPLETE
+        results = calculation.get_results()
+        assert len(results.elementary_step_ids) == 1
+        assert len(results.structure_ids) == 4
+
+        structures = self.manager.get_collection("structures")
+        elementary_steps = self.manager.get_collection("elementary_steps")
+        assert elementary_steps.count("{}") == 1
+        assert structures.count(json.dumps({"label": db.Label.COMPLEX_OPTIMIZED.name.lower()})) == 0
+        new_elementary_step = db.ElementaryStep(results.elementary_step_ids[-1], elementary_steps)
+        new_ts = db.Structure(new_elementary_step.get_transition_state(), structures)
+        fit = utils.QuaternionFit(ts_reference.get_atoms().positions, new_ts.get_atoms().positions)
         assert fit.get_rmsd() < 1e-2
 
     @skip_without('database', 'readuct', 'molassembler')
@@ -495,7 +533,7 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 11
+        assert len(results.property_ids) == 15
         # Structure counts: (complex + TS + product) + re-optimized reactants (x2)
         assert len(results.structure_ids) == 3 + 2
         assert len(results.elementary_step_ids) == 2
@@ -774,7 +812,7 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 9
+        assert len(results.property_ids) == 11
         # Structure counts: TS + product + new reactant
         assert len(results.structure_ids) == 3
         assert len(results.elementary_step_ids) == 1
@@ -922,7 +960,7 @@ class ScineReactComplexNt2JobTest(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 11
+        assert len(results.property_ids) == 15
         assert len(results.structure_ids) == 3 + 2  # re-optimized reactants (x2) + complex + TS + product
         assert len(results.elementary_step_ids) == 2
         assert structures.count("{}") == 3 + 3 + 2

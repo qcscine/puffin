@@ -80,7 +80,7 @@ class ScineJobWithObservers(SubSettingsJob, ABC):
                 raise RuntimeError("Unreachable")  # just for linters
         observers = []
         observer_functions = []
-        model = self._calculation.get_model()
+        model = self.get_model()
         model.complete_model(self.get_calc(input_names[0], systems).settings)
         if self.settings[self.job_key]["store_all_structures"]:
             observers.append(StoreEverythingObserver(self._calculation.get_id(), model))
@@ -120,6 +120,6 @@ class ScineJobWithObservers(SubSettingsJob, ABC):
                                          expected_results: List[str], error_msg: str, **kwargs) \
             -> Dict[str, Optional[utils.core.Calculator]]:
         systems, success = self.observed_readuct_call(subtask, systems, input_names, **kwargs)
-        names_to_check = [kwargs['output'] if 'output' in kwargs else input_names]
+        names_to_check = kwargs['output'] if 'output' in kwargs else input_names
         self.throw_if_not_successful(success, systems, names_to_check, expected_results, error_msg)
         return systems

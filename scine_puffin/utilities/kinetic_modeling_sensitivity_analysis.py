@@ -227,13 +227,37 @@ class RMSKineticModelingSensitivityAnalysis:
         """
         return self.rms_model.get_n_parameters()
 
-    def get_reduced_parameter_mapping(self):
+    def get_reduced_parameter_mapping(self) -> List[Tuple[int, int]]:
         """
         Getter for the mapping between full parameter list and prescreened parameter list.
         """
         if self._full_to_reduced_parameter_mapping is None:
-            return [(i, i) for i in range(self.get_n_parameters())]
-        return self._full_to_reduced_parameter_mapping
+            initial_parameter_mapping = [(i, i) for i in range(self.get_n_parameters())]
+        else:
+            initial_parameter_mapping = self._full_to_reduced_parameter_mapping
+
+        if (
+            len(self.rms_model.uq_h_lower) != self.rms_model.get_n_aggregates(with_solvent=False) or
+            len(self.rms_model.uq_h_upper) != self.rms_model.get_n_aggregates(with_solvent=False) or
+            len(self.rms_model.uq_ea_lower) != self.rms_model.get_n_reactions() or
+            len(self.rms_model.uq_ea_upper) != self.rms_model.get_n_reactions()
+        ):
+            raise RuntimeError("The number of reactions/aggregates does not match the number of uncertainties.")
+
+        # Remove all parameters for which we have a zero uncertainty.
+        non_zero_h_uq = [low > 1e-6 or up > 1e-6 for low, up in
+                         zip(self.rms_model.uq_h_lower, self.rms_model.uq_h_upper)]
+        non_zero_ea_uq = [low > 1e-6 or up > 1e-6 for low, up in
+                          zip(self.rms_model.uq_ea_lower, self.rms_model.uq_ea_upper)]
+        all_non_zero = non_zero_h_uq + non_zero_ea_uq
+        parameter_mapping: List[Tuple[int, int]] = []
+        new_reduced_index = 0
+        for full_i, _ in initial_parameter_mapping:
+            if all_non_zero[full_i]:
+                parameter_mapping.append((full_i, new_reduced_index))
+                new_reduced_index += 1
+        self._full_to_reduced_parameter_mapping = parameter_mapping
+        return parameter_mapping
 
     def set_prescreening_condition(self, vertex_flux: np.ndarray, edge_flux: np.ndarray, vertex_t: float,
                                    edge_t: float):
@@ -549,11 +573,12 @@ class RMSKineticModelingSensitivityAnalysis:
             # parameters and we need to map back to the full parameter set to run the actual calculations.
             params = self._update_by_reduced_parameters(reduced_params, full_parameters, mapping)
             h = params[:n_aggregates]
+            h_list: List[float] = [h_val for h_val in h]
             ea = params[n_aggregates:]
             assert ea.shape[0] == n_ea
             assert h.shape[0] == n_aggregates
             ea = self.rms_model.ensure_non_negative_barriers(ea, h, self.rms_model.s)
-            simulation, _, volume, _, sol = self.rms_model.run_kinetic_modeling(filename, h=h.tolist(), ea=ea)
+            simulation, _, volume, _, sol = self.rms_model.run_kinetic_modeling(filename, h=h_list, ea=ea)
 
             if simulation is None:
                 print("Invalid model solution. This is only a reason to worry if you are not screening large spaces\n"

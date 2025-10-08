@@ -109,6 +109,8 @@ class ScineSinglePointJobTest(JobTestCase):
         settings = qmmm_calculation.get_settings()
         settings["require_gradients"] = True
         settings["require_charges"] = False
+        settings["require_partial_energies"] = True
+        settings["require_partial_gradients"] = True
         settings["electrostatic_embedding"] = True
         qmmm_calculation.set_settings(settings)
 
@@ -148,8 +150,17 @@ class ScineSinglePointJobTest(JobTestCase):
             [-1.791648e-04, -6.841384e-04, 2.429609e-03]
         ]
         assert qmmm_calculation.get_status() == db.Status.COMPLETE
+        print(qmmm_calculation.get_settings())
         gradient_property_ids = structure.query_properties("gradients", qmmm_model, properties)
         assert len(gradient_property_ids) > 0
+        qm_energy_property_ids = structure.query_properties("qm_energy", qmmm_model, properties)
+        assert len(qm_energy_property_ids) > 0
+        mm_energy_property_ids = structure.query_properties("mm_energy", qmmm_model, properties)
+        assert len(mm_energy_property_ids) > 0
+        qm_gradient_property_ids = structure.query_properties("qm_gradients", qmmm_model, properties)
+        assert len(qm_gradient_property_ids) > 0
+        mm_gradient_property_ids = structure.query_properties("mm_gradients", qmmm_model, properties)
+        assert len(mm_gradient_property_ids) > 0
         gradient_property = db.DenseMatrixProperty(gradient_property_ids[0], properties)
         assert np.max(np.abs(gradient_property.get_data() - gradient_reference)) < 1e-6
 

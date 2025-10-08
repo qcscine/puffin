@@ -34,8 +34,8 @@ class RMSKineticModel:
 
     def __init__(self, settings: Dict, manager: db.Manager, model: db.Model, rms_path: str, rms_file_name: str) -> None:
         """
-        Parameters:
-        -----------
+        Parameters
+        ----------
         settings : Dict[str, Any]
             The settings of the kinetic modeling calculation. This must contain:
                 * The activation energies 'ea'.
@@ -82,11 +82,14 @@ class RMSKineticModel:
         self._phase_options = ["ideal_dilute_solution", "ideal_gas"]
         self.a_str_ids: List[str] = self.settings["aggregate_ids"]
         self.r_str_ids: List[str] = self.settings["reaction_ids"]
+        self.reversibility: Optional[List[bool]] = None if "reversible_reactions" not in self.settings\
+            else self.settings["reversible_reactions"]
         self.aggregate_types = [db.CompoundOrFlask(a_type) for a_type in self.settings["aggregate_types"]]
         self.solver: str = self.settings["solver"]
         self.start_concentrations = [float(s) for s in self.settings["start_concentrations"]]
-        self.temperature = float(model.temperature) if self.settings["reactor_temperature"] == "none" else float(
-            self.settings["reactor_temperature"])
+        self.temperature = float(model.temperature)
+        if "reactor_temperature" in self.settings and self.settings["reactor_temperature"] != "none":
+            self.temperature = float(self.settings["reactor_temperature"])
         self.pressure = float(model.pressure) if self.settings["reactor_pressure"] == "none" else float(
             self.settings["reactor_pressure"])
         self.site_density = None
@@ -98,7 +101,7 @@ class RMSKineticModel:
         self.solvent: Optional[str] = self.settings["reactor_solvent"]
         if self.solvent == "none":
             self.solvent = model.solvent if model.solvent != "none" else None
-        if self.settings["solvent_aggregate_str_id"] != "none":
+        if "solvent_aggregate_str_id" in self.settings and self.settings["solvent_aggregate_str_id"] != "none":
             self.solvent_index = self.settings["aggregate_ids"].index(self.settings["solvent_aggregate_str_id"])
             self.solvent_aggregate_str_id = self.settings["solvent_aggregate_str_id"]
 
@@ -452,7 +455,7 @@ class RMSKineticModel:
             rates = np.transpose(np.array([raw_rates[:, i] for i in time_list]))
         for i in range(n_reactions):
             abs_rates_i = np.abs(rates[i, :])
-            edge_flux[i] = integrate.simps(abs_rates_i, times)
+            edge_flux[i] = integrate.simpson(y=abs_rates_i, x=times)
         return edge_flux
 
     def get_aggregate_to_reaction_map(self):

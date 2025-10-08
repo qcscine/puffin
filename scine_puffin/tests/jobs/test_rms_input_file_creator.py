@@ -98,6 +98,7 @@ class RMSInputFileCreatorTest(JobTestCase):
                 'type': 'Arrhenius'},
             'products': [c_ids[1].string()],
             'reactants': [c_ids[0].string()],
+            "reversible": True,
             'type': 'ElementaryReaction'}]
         assert reaction_list == reference
 

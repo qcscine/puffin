@@ -6,7 +6,9 @@ See LICENSE.txt for details.
 """
 
 import os
-from typing import TYPE_CHECKING, List, Dict, Optional, Tuple
+import numpy as np
+import scipy
+from typing import TYPE_CHECKING, List, Dict, Optional, Tuple, Union
 
 from scine_puffin.config import Configuration
 from .templates.job import calculation_context, job_configuration_wrapper
@@ -69,37 +71,46 @@ class SwooseQmmmForces(ScineJob):
         return [int(i) for i in qm_atoms.get_data()]
 
     @staticmethod
+    def write_charges_to_file(charge_file_name: str, charges: Union[np.ndarray, List[float]]):
+        charge_file_str = ""
+        for charge in charges:
+            charge_file_str += str(charge) + "\n"
+        with open(charge_file_name, 'w') as p_file:
+            p_file.write(charge_file_str)
+
+    @staticmethod
     def write_partial_charge_file(charge_file_name: str, properties: db.Collection, structure: db.Structure) -> None:
         try:
             charges = db.VectorProperty(structure.get_property('atomic_charges'))
         except RuntimeError as e:
             raise RuntimeError('Atomic charges are not available as a property of the QM/MM structure.') from e
         charges.link(properties)
-        charge_file_str = ""
-        for charge in charges.get_data():
-            charge_file_str += str(charge) + "\n"
-        with open(charge_file_name, 'w') as p_file:
-            p_file.write(charge_file_str)
+        SwooseQmmmForces.write_charges_to_file(charge_file_name, charges.get_data())
 
     @staticmethod
     def write_connectivity_file(connectivity_file_name: str, properties: db.Collection,
                                 structure: db.Structure) -> None:
         try:
-            bond_orders = db.SparseMatrixProperty(structure.get_property('bond_orders'))
+            bond_order_property = db.SparseMatrixProperty(structure.get_property('bond_orders'))
         except RuntimeError as e:
             raise RuntimeError('Bond orders are missing as properties of the structure during QM/MM.') from e
-        bond_orders.link(properties)
-        bo_matrix = bond_orders.get_data().toarray()
+        bond_order_property.link(properties)
         n_atoms = len(structure.get_atoms())
+        print("Writing bond orders to connectivity file for {} atoms".format(n_atoms))
+        bo_matrix = bond_order_property.get_data()
+        if not isinstance(bo_matrix, scipy.sparse.csc_matrix):
+            raise RuntimeError('The bond order matrix must be of type: scipy.sparse.csc_matrix.')
         if bo_matrix.shape != (n_atoms, n_atoms):
             raise RuntimeError('The dimensions of the provided bond orders are incompatible with the structure.')
+        # Construct sparse matrix as a triplet container to have fast access to the non-zero values, rows, and columns.
+        coo_matrix = scipy.sparse.coo_matrix(bo_matrix)
+        neighbor_lists: List[List[int]] = [[] for _ in range(n_atoms)]
+        for i, j, v in zip(coo_matrix.row, coo_matrix.col, coo_matrix.data):
+            if i != j and v > 0.5:
+                neighbor_lists[i].append(j)
         with open(connectivity_file_name, 'w') as c_file:
-            for i in range(n_atoms):
-                neighbors = ''
-                for j in range(n_atoms):
-                    if i == j or bo_matrix[i, j] < 0.5:
-                        continue
-                    neighbors += str(j) + ' '
+            for i, j_list in enumerate(neighbor_lists):
+                neighbors = " ".join([str(j) for j in j_list])
                 c_file.write(neighbors + '\n')
 
     @staticmethod

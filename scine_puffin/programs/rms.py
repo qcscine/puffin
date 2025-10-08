@@ -5,7 +5,7 @@ See LICENSE.txt for details.
 """
 
 import os
-from typing import List, Optional
+from typing import List
 
 from .program import Program
 from scine_puffin.config import Configuration
@@ -68,7 +68,7 @@ class JuliaPrecompiler(object):
         if not hasattr(cls, 'instance'):
             cls.instance = super(JuliaPrecompiler, cls).__new__(cls)
             cls.instance.julia_is_precompiled = False
-            cls.instance.root: Optional[str] = None
+            cls.instance.root = ""
         return cls.instance
 
     def set_root(self, root: str):

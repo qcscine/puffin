@@ -151,7 +151,6 @@ class ConnectivityJob(ScineJob, ABC):
                     success, systems, [key], ["energy", "bond_orders", "atomic_charges"]
                 )
             bond_orders = self.get_calc(key, systems).get_results().bond_orders  # type: ignore
-
         return bond_orders, systems
 
     @is_configured
@@ -404,7 +403,7 @@ class ConnectivityJob(ScineJob, ABC):
             )
             return utils.BondOrderCollection(0)  # actually unreached, just avoid lint errors
 
-        model = self._calculation.get_model()
+        model = self.get_model()
         # generate bond orders depending on model and surface atoms
         if model.periodic_boundaries and model.periodic_boundaries != "none":
             # PeriodicSystem handles everything
@@ -474,7 +473,7 @@ class ConnectivityJob(ScineJob, ABC):
             A database property holding bond orders.
         """
         # db bond orders
-        bos = structure.query_properties("bond_orders", self._calculation.get_model(), self._properties)
+        bos = structure.query_properties("bond_orders", self.get_model(), self._properties)
         if len(bos) == 0 and not self.connectivity_settings["enforce_bond_order_model"]:
             bos = structure.get_properties("bond_orders")
         if len(bos) == 0:

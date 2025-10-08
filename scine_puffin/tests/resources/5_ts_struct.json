@@ -1,0 +1,5 @@
+{
+        "masm_decision_list" : ";(-28, -21, -17, 2)",
+        "masm_cbor_graph" : "o2FjD2FnomFFgGFagQFhdoMCAAE=;pGFhgqVhYQBhYwRhb4GDAAECYXKjYWyDgQGBAoEFYmxygoIAAYECYXOCggECgQVhcwKlYWEAYWMFYW+BgwABAmFyo2Fsg4EAgQOBBGJscoOBAIECgQFhc4OBAIEEgQNhcwJhYw9hZ6JhRYWDAAUAgwEEAIMCBACDAwUAgwQFAGFahgEBAQgGBmF2gwIAAQ==",
+        "masm_idx_map" : "[(1, 4), (1, 5), (1, 3), (0, 0), (1, 1), (1, 0), (1, 2)]"
+}

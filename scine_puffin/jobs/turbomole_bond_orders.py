@@ -165,11 +165,6 @@ class TurbomoleBondOrders(TurbomoleJob):
         model.version = config.programs()[model.program]["version"]
         calculation.set_model(model)
 
-        # Generate database results
-        db_results = calculation.get_results()
-        db_results.clear()
-        calculation.set_results(db_results)
-
         # Store energy
         self.store_property(
             properties,

@@ -14,14 +14,23 @@ import random
 import traceback
 from datetime import datetime, timedelta
 from importlib import import_module, util
-from typing import Any, Dict, List
+from typing import Any, Dict, List, TYPE_CHECKING, Type
 from json import dumps
+
 from .config import Configuration
+from .jobs.templates.job import Job
+from .utilities.imports import module_exists, DummyClass
 
 # A global variable holding the process actually running jobs.
 # This variable is used to be able to interact with (mainly to kill) said
 # process even from outside the loop() function.
 PROCESS = None
+
+
+if module_exists("scine_database") or TYPE_CHECKING:
+    import scine_database as db
+else:
+    db = DummyClass  # type: ignore
 
 
 def _log(config: Configuration, message: str):
@@ -40,7 +49,7 @@ def _log(config: Configuration, message: str):
             f.write(str(datetime.utcnow()) + ": " + config["daemon"]["uuid"] + ": " + message + "\n")
 
 
-def slow_connect(manager, config: Configuration) -> None:
+def slow_connect(manager: db.Manager, config: Configuration) -> None:
     """
     Connects the given Manager to the database referenced in the Configuration.
     This version of connecting tries 30 times to connect to the database.
@@ -54,8 +63,6 @@ def slow_connect(manager, config: Configuration) -> None:
     config : scine_puffin.config.Configuration
         The current configuration of the Puffin.
     """
-    import scine_database as db
-
     name = config["database"]["name"]
     if "," in name:
         name = name.split(",")[0]
@@ -113,7 +120,7 @@ def kill_daemon(config: Configuration) -> None:
         parent.kill()
 
 
-def loop(config: Configuration, available_jobs: dict) -> None:
+def loop(config: Configuration, available_jobs: Dict[str, str]) -> None:
     """
     The outer loop function.
     This function controls the forked actual loop function, which is implemented
@@ -124,7 +131,7 @@ def loop(config: Configuration, available_jobs: dict) -> None:
     ----------
     config : scine_puffin.config.Configuration
         The current configuration of the Puffin.
-    available_jobs : dict
+    available_jobs : Dict[str, str]
         The dictionary of available jobs, given the current config
         and runtime environment.
     """
@@ -134,8 +141,6 @@ def loop(config: Configuration, available_jobs: dict) -> None:
         sys.exit()
 
     # Connect to database
-    import scine_database as db
-
     manager = db.Manager()
     slow_connect(manager, config)
 
@@ -210,7 +215,7 @@ def loop(config: Configuration, available_jobs: dict) -> None:
 
 
 def _check_touch_of_pending_jobs(
-        manager, calculations, config: Configuration, reset_delta: timedelta
+        manager: db.Manager, calculations: db.Collection, config: Configuration, reset_delta: timedelta
 ) -> None:
     """
     Checks for calculation of other Puffins that are pending.
@@ -227,8 +232,6 @@ def _check_touch_of_pending_jobs(
         The time difference after which a job is assumed
         to be dead. Time given in seconds.
     """
-    import scine_database as db
-
     # Check for dead jobs in pending status in the database
     selection = {"status": "pending"}
     server_now = manager.server_time()
@@ -292,15 +295,13 @@ def check_setup(config: Configuration) -> Dict[str, str]:
     # Generate list of jobs for which the required programs are present
     available_jobs = {}
     for job in all_jobs:
-        class_name = "".join([s.capitalize() for s in job.split("_")])
-        module = import_module("scine_puffin.jobs." + job)
-        class_ = getattr(module, class_name)
+        class_ = _job_class_from_name(job)
         required_programs = class_.required_programs()
         for program in required_programs:
             if program not in available_programs:
                 break
         else:
-            available_jobs[job] = class_name
+            available_jobs[job] = class_.__name__
 
     # Output results
     print("")
@@ -328,7 +329,7 @@ def check_setup(config: Configuration) -> Dict[str, str]:
 
 
 def _loop_impl(
-        config: Configuration, available_jobs: dict, JOB=None, CURRENT_DB=None
+        config: Configuration, available_jobs: Dict[str, str], JOB=None, CURRENT_DB=None
 ) -> None:
     """
     The actual loop, executing jobs and handling all calculation related
@@ -347,8 +348,6 @@ def _loop_impl(
         The name of the current database, used to sync the two threads in case
         of multi-database usage of a single Puffin.
     """
-    import scine_database as db
-
     # Connect to database
     manager = db.Manager()
     slow_connect(manager, config)
@@ -358,17 +357,31 @@ def _loop_impl(
     last_cycle = datetime.now()
     job_list = list(available_jobs.keys())
     program_list = ["any"]
-    version_list = []
+    version_list = ["any"]
     for program_name, settings in config.programs().items():
         if settings["available"]:
             program_list.append(program_name)
             version_list.append(program_name + settings["version"])
+
+    # QM/QM combinations
+    if "serenity" in program_list:
+        serenity_version_str = "/serenity" + config.programs()["serenity"]["version"]
+        program_list.append("serenity/serenity")
+        version_list.append(serenity_version_str + serenity_version_str)
+    # QM/MM combinations
+    if "swoose" in program_list:
+        program_combinations = []
+        for program_name in program_list:
+            if program_name not in ["readuct", "core", "utils", "database", "molassembler", "swoose"]:
+                program_combinations.append(program_name + "/swoose")
+        program_list += program_combinations
 
     # Initialize cache for failure checks
     previously_failed_job_count = 0
     previously_failed_jobs: List[db.ID] = []
     previous_dbs: List[str] = []
     n_jobs_run = 0
+    excluded_ids: List[Dict[str, str]] = []
 
     while True:
         # Stop the loop if a stop file has been written
@@ -422,7 +435,8 @@ def _loop_impl(
                     {"job.disk": {"$lte": float(config["resources"]["disk"])}},
                     {"job.memory": {"$lte": float(config["resources"]["memory"])}},
                     {"job.order": {"$in": job_list}},
-                    {"model.program": {"$in": program_list}}
+                    {"model.program": {"$in": program_list}},
+                    {"_id": {"$nin": excluded_ids}},
                     # { '$or' : [
                     #    {'model.version' : { '$eq' : 'any'} },
                     #    {'model.program + model.version' : { '$in' : version_list} }
@@ -456,6 +470,12 @@ def _loop_impl(
                     return  # kill puffin since it would do a pointless calculation
                 # touch and thus update the timestamp
                 calculation.touch()
+                # make sure some settings prohibit us from executing
+                if not _calculation_can_be_executed(calculation, available_jobs, program_list):
+                    excluded_ids.append({"$oid": str(calculation.id())})
+                    calculation.set_executor("")
+                    calculation.set_status(db.Status.NEW)
+                    continue
                 # Leave db loop if calculation was found
                 break
 
@@ -473,13 +493,10 @@ def _loop_impl(
 
         # Load requested job
         job_name = calculation.get_job().order
-        try:
-            class_name = available_jobs[job_name]
-        except BaseException as e:
-            raise KeyError("Missing Job in list of possible jobs.\n" +
-                           "Dev-Note: This error should not be reachable.") from e
-        module = import_module("scine_puffin.jobs." + job_name)
-        class_ = getattr(module, class_name)
+        if job_name not in available_jobs:
+            raise RuntimeError("Missing Job in list of possible jobs.\n" +
+                               "Dev-Note: This error should not be reachable.")
+        class_ = _job_class_from_name(job_name)
 
         SUCCESS: Any = multiprocessing.Value('i', False)  # Create value in shared memory. Use int for bool flag
         # Run the job in a third process
@@ -573,9 +590,10 @@ def _loop_impl(
                 break
 
 
-def _job_execution(config: Configuration, job_class: type, manager, calculation, SUCCESS=None) -> None:
+def _job_execution(config: Configuration, job_class: Type[Job], manager: db.Manager, calculation: db.Calculation,
+                   SUCCESS=None) -> None:
     """
-    We are running job in a separate process to save us from SegFaults and enforce memory limit
+    We are running the job in a separate process to save us from SegFaults and enforce memory limit
     """
     job = job_class()
     _log(config, "Processing Job: {:s}".format(str(calculation.id())))
@@ -626,9 +644,7 @@ def _job_execution(config: Configuration, job_class: type, manager, calculation,
     SUCCESS.value = success
 
 
-def _fail_calculation(calculation, config: Configuration, comment_to_add: str, start: datetime) -> None:
-    import scine_database as db
-
+def _fail_calculation(calculation: db.Calculation, config: Configuration, comment_to_add: str, start: datetime) -> None:
     calculation.set_status(db.Status.FAILED)
     _update_job_specs(calculation, config)
     comment = calculation.get_comment()
@@ -637,9 +653,40 @@ def _fail_calculation(calculation, config: Configuration, comment_to_add: str, s
     calculation.set_runtime((datetime.now() - start).total_seconds())
 
 
-def _update_job_specs(calculation, config: Configuration) -> None:
+def _update_job_specs(calculation: db.Calculation, config: Configuration) -> None:
     db_job = calculation.get_job()
     db_job.cores = int(config["resources"]["cores"])
     db_job.disk = float(config["resources"]["disk"])
     db_job.memory = float(config["resources"]["memory"])
     calculation.set_job(db_job)
+
+
+def _calculation_can_be_executed(calculation: db.Calculation,
+                                 available_jobs: Dict[str, str],
+                                 available_programs: List[str]) -> bool:
+    settings = calculation.get_settings().as_dict()
+    job_name = calculation.get_job().order
+    if job_name not in available_jobs:
+        return False
+    job_class = _job_class_from_name(job_name)
+    required_programs = job_class.settings_based_required_programs(settings)
+    return all(program in available_programs for program in required_programs)
+
+
+def _job_class_from_name(job_name: str) -> Type[Job]:
+    """
+    Returns the job class based on the name of the job.
+
+    Parameters
+    ----------
+    job_name : str
+        The job order.
+
+    Returns
+    -------
+    Type[Job]
+        The job class.
+    """
+    module = import_module("scine_puffin.jobs." + job_name)
+    class_name = "".join([s.capitalize() for s in job_name.split("_")])
+    return getattr(module, class_name)

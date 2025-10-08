@@ -5,13 +5,14 @@ Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Gr
 See LICENSE.txt for details.
 """
 
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Dict
 
 from scine_puffin.config import Configuration
-from scine_puffin.jobs.templates.job import calculation_context, job_configuration_wrapper
+from scine_puffin.jobs.templates.job import calculation_context, job_configuration_wrapper, is_configured
 from scine_puffin.jobs.templates.scine_job import ScineJob
 from scine_puffin.utilities.qm_mm_settings import prepare_optional_settings
 from scine_puffin.utilities.imports import module_exists, MissingDependency
+from scine_puffin.utilities.scine_helper import SettingsManager
 
 if module_exists("scine_database") or TYPE_CHECKING:
     import scine_database as db
@@ -75,6 +76,7 @@ class ScineSinglePoint(ScineJob):
         # actual calculation
         with calculation_context(self):
             prepare_optional_settings(structure, calculation, settings_manager, self._properties)
+            self.sp_preprocessing(settings_manager, structure, config["resources"])
             systems, keys = settings_manager.prepare_readuct_task(
                 structure, calculation, calculation.get_settings(), config["resources"]
             )
@@ -88,3 +90,7 @@ class ScineSinglePoint(ScineJob):
     @staticmethod
     def required_programs() -> List[str]:
         return ["database", "readuct", "utils"]
+
+    @is_configured
+    def sp_preprocessing(self, _: SettingsManager, __: db.Structure, ___: Dict) -> None:
+        pass

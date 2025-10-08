@@ -71,7 +71,6 @@ class Conformers(ConnectivityJob):
 
         # Generate database results
         db_results = calculation.get_results()
-        db_results.clear()
 
         with calculation_context(self):
             # Get settings and check for incorrect settings

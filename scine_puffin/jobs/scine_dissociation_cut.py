@@ -15,8 +15,9 @@ from scine_puffin.config import Configuration
 from scine_puffin.utilities import masm_helper, scine_helper
 from scine_puffin.utilities.program_helper import ProgramHelper
 from .templates.job import breakable, calculation_context, job_configuration_wrapper
-from .templates.scine_react_job import ReactJob
+from .scine_react_complex_nt2 import ScineReactComplexNt2
 from scine_puffin.utilities.imports import module_exists, requires, MissingDependency
+from scine_puffin.utilities.task_to_readuct_call import SubTaskToReaductCall
 
 if module_exists("scine_database") or TYPE_CHECKING:
     import scine_database as db
@@ -32,7 +33,7 @@ else:
     readuct = MissingDependency("scine_readuct")
 
 
-class ScineDissociationCut(ReactJob):
+class ScineDissociationCut(ScineReactComplexNt2):
     __doc__ = ("""
     A job that tries to find a dissociation reaction by cutting one or more bonds in a single molecule and optimizing
     the fragments.
@@ -79,10 +80,30 @@ class ScineDissociationCut(ReactJob):
 
        1. Single product optimizations ``opt_*``
        2. Optimization of the reactive complex: ``rcopt_*``
+       3. Newton trajectory scan: ``nt_*``
+       4. TS optimization: ``tsopt_*``
+       5. Validation using an IRC scan: ``irc_*``
+       6. Optimization of the structures obtained with the IRC scan : ``ircopt_*``
+       7. Analyze supersystem, derive individual products and assign charges: ``sp_*``
+       8. Optimization of new products: ``opt_*``
     """ + "\n"
-               + ReactJob.optional_settings_doc() + "\n"
-               + ReactJob.general_calculator_settings_docstring() + "\n"
-               + ReactJob.generated_data_docstring() + "\n" +
+               + ScineReactComplexNt2.optional_settings_doc() + "\n" + """
+    Additional settings related to the dissociation workflow are:
+
+      charge_propensity_check : int
+        The range to check for possible charges for products. A value
+        of 1 (default) will check for a neutral reactant the charges -1, 0, and +1
+        for each product. A reactant with a charge of -1 will shift these charges
+        by one.
+
+      additional_nt_run_dissociation_energy_limit : float
+        The upper limit for the determined dissociation energy below which
+        this workflow will also search for a transition state with an associative
+        NT2 reaction search protocol should the barrierless reaction search fail.
+
+    """ + "\n"
+               + ScineReactComplexNt2.general_calculator_settings_docstring() + "\n"
+               + ScineReactComplexNt2.generated_data_docstring() + "\n" +
                """
       If successful the following data will be generated and added to the database:
 
@@ -96,28 +117,37 @@ class ScineDissociationCut(ReactJob):
         The ``bond_orders`` (``SparseMatrixProperty``), and
         ``electronic_energy`` (``NumberProperty``) of the given structure and all split products
         will be provided.
+        The ``dissociated_structures`` (``StringProperty``) will be given to the reactant,
+        specifying the IDs of all products having the lowest dissociation energy.
+        The IDs are given in a list that is encoded as a string.
     """
-               + ReactJob.required_packages_docstring()
+               + ScineReactComplexNt2.required_packages_docstring()
                )
 
     def __init__(self) -> None:
         super().__init__()
         self.name = "Scine React Job with bond cutting"
+        self.diss = 'dissociations'
+        self.charge_propensity = "charge_propensity_check"
+        self.additional_nt_run_limit = "additional_nt_run_dissociation_energy_limit"
         opt_defaults: Dict[str, Any] = {
-            "convergence_max_iterations": 500,
-            "geoopt_coordinate_system": "cartesianWithoutRotTrans"
+            utils.opt_settings_names.Convergence.max_iterations: 500,
+            utils.opt_settings_names.GeometryOptimizer.coordinate_system: "cartesianWithoutRotTrans"
         }
         rcopt_defaults: Dict[str, Any] = {
             "optimizer": "bfgs",
-            "bfgs_min_iterations": 5  # make sure that dissociated structure does not immediately signal convergence
+            utils.opt_settings_names.Bfgs.min_iterations:
+                5  # make sure that dissociated structure does not immediately signal convergence
         }
-        self.settings = {
+        self.settings: Dict[str, Dict[str, Any]] = {
             **self.settings,
-            "opt": opt_defaults
+            self.opt_key: opt_defaults,
+            self.job_key: {
+                **self.settings[self.job_key],
+                self.additional_nt_run_limit: 0.0,
+            }
         }
         self.settings[self.rc_opt_system_name] = {**self.settings[self.rc_opt_system_name], **rcopt_defaults}
-        self.diss = 'dissociations'
-        self.charge_propensity = "charge_propensity_check"
         self.settings[self.job_key][self.diss] = list()
         self.settings[self.job_key][self.charge_propensity] = 1
 
@@ -130,9 +160,6 @@ class ScineDissociationCut(ReactJob):
             if len(calculation.get_structures()) != 1:
                 self.raise_named_exception(f"{self.name} is only implemented for single molecule system.")
             settings_manager, program_helper = self.reactive_complex_preparations()
-            db_results = self._calculation.get_results()
-            db_results.clear()
-            self._calculation.set_results(db_results)
             self._dissociation_impl(settings_manager, program_helper)
 
         return self.postprocess_calculation_context()
@@ -142,11 +169,13 @@ class ScineDissociationCut(ReactJob):
 
         if self.settings[self.rc_opt_system_name]['optimizer'].lower() != 'bfgs':
             # in case user specified different optimizer, delete default setting
-            del self.settings[self.rc_opt_system_name]['bfgs_min_iterations']
+            del self.settings[self.rc_opt_system_name][utils.opt_settings_names.Bfgs.min_iterations]
         dissociations: List[int] = self.settings[self.job_key][self.diss]
         if not dissociations:
             self.raise_named_exception(f"Bond dissociation information is missing. It has to be "
                                        f"specified in the settings with '{self.diss}'.")
+        if not isinstance(dissociations, list):
+            self.raise_named_exception(f"Expected a list for '{self.diss}', but got '{dissociations}'")
         if len(dissociations) % 2 != 0:
             self.raise_named_exception(f"Received an uneven number of entries in '{self.diss}', this does not "
                                        f"correspond to the expected format.")
@@ -176,7 +205,7 @@ class ScineDissociationCut(ReactJob):
             rc_atoms,
             bond_orders,
             self.connectivity_settings,
-            self._calculation.get_model().periodic_boundaries,
+            self.get_model().periodic_boundaries,
             self.surface_indices(db.Structure(self._calculation.get_structures()[0], self._structures)),
             bond_breaks
         )
@@ -255,18 +284,30 @@ class ScineDissociationCut(ReactJob):
         lowest_rhs_structures = self._save_dissociated_structures(split_names, lowest_combination,
                                                                   product_single_energies, program_helper)
         if lowest_energy < rc_energy:
-            self._calculation.set_comment(f"The dissociation(s) {dissociations} has a formal negative electronic "
-                                          "dissociation energy. This should be tested for a potential reaction with a "
-                                          "barrier")
-            raise breakable.Break
+            error = f"The dissociation(s) {dissociations} has a formal negative electronic " \
+                    "dissociation energy.\nThis should be tested for a potential reaction with a " \
+                    "barrier"
+            print(error)
+            if self.settings[self.job_key][self.additional_nt_run_limit] > 0.0:
+                self._calculation.set_comment(self._calculation.get_comment() + error)
+                raise breakable.Break
 
         """ Barrierless Reaction Check """
+        print("Barrierless Reaction Check")
         # we need to write a newly generated reactive complex
         # we directly overwrite reactive complex in systems map
         self._setup_dissociated_reactive_complex(rc_atoms, super_map, bond_breaks, split_names, lowest_combination)
 
         # we optimize this new reactive complex and see whether we arrive at the original one
-        rc_opt_graph, _ = self.check_for_barrierless_reaction()
+
+        class Sentinel:
+            pass
+
+        rc_opt_graph: Union[Sentinel, None, str] = Sentinel()
+        if lowest_energy < rc_energy:
+            print("Skipping reactive complex optimization, because dissociation energy is negative.")
+        else:
+            rc_opt_graph, _ = self.check_for_barrierless_reaction()
         if rc_opt_graph is None:
             # this means we got the same graph as in the original structure -> it was successful
             print("Barrierless Reaction Found")
@@ -294,6 +335,40 @@ class ScineDissociationCut(ReactJob):
             db_results.add_elementary_step(new_step.id())
             self._calculation.set_comment(self.name + ": Barrierless reaction found.")
             self._calculation.set_results(self._calculation.get_results() + db_results)
+        else:
+            # we got a different graph -> we have a barrier
+            # if we allow for additional nt runs, we can try to find the barrier
+            print("No Barrierless Reaction Found")
+            dissociation_energy = (lowest_energy - rc_energy) * utils.KJPERMOL_PER_HARTREE
+            if dissociation_energy > self.settings[self.job_key][self.additional_nt_run_limit]:
+                raise breakable.Break
+
+            print("Trying to find a transition state in an additional associative NT run")
+            # we start from the reactive complex arranged from the fragments aligned by the broken bond and the
+            # length set at VdW distance, so we set the dissociation coordinates now as associations
+            # we try an association here, because apparently the fragments have shifted enough such that the
+            # optimization cannot yield the original structure and Chemoton can already set up an additional
+            # NT run from the original structure trying to enforce the dissociation
+            self.settings[self.exploration_key][utils.opt_settings_names.Nt2.associations] = dissociations
+            self.settings[self.exploration_key][utils.opt_settings_names.Nt2.dissociations] = []
+            self.systems, success = self.observed_readuct_call(
+                SubTaskToReaductCall.NT2, self.systems, [self.rc_key], **self.settings[self.exploration_key])
+            if not success:
+                self.verify_connection()
+                error = f"\n{self.name} NT Job: No TS guess found."
+                print(error)
+                self._calculation.set_comment(self._calculation.get_comment() + error)
+                self.capture_raw_output()
+                raise breakable.Break
+
+            tsguess_name = self.output(self.exploration_key)[0]
+            try:
+                self._tsopt_hess_irc_ircopt_postprocessing(tsguess_name, settings_manager, program_helper)
+            except BaseException:
+                _, tsguess_structure = self._store_ts_with_propensity_info(tsguess_name, program_helper,
+                                                                           db.Label.TS_GUESS)
+                self._calculation.set_restart_information("TS_GUESS", tsguess_structure.id())
+                raise
 
     def _get_propensity_range(self) -> List[int]:
         propensity_limit = self.settings[self.job_key][self.charge_propensity]
@@ -388,7 +463,7 @@ class ScineDissociationCut(ReactJob):
             "bond_orders",
             "SparseMatrixProperty",
             bond_orders.matrix,
-            self._calculation.get_model(),
+            self.get_model(),
             self._calculation,
             self.ref_structure
         )
@@ -413,7 +488,7 @@ class ScineDissociationCut(ReactJob):
                     "bond_orders",
                     "SparseMatrixProperty",
                     bond_orders.matrix,
-                    self._calculation.get_model(),
+                    self.get_model(),
                     self._calculation,
                     rhs_structure,
                 )
@@ -430,7 +505,7 @@ class ScineDissociationCut(ReactJob):
             "dissociated_structures",
             "StringProperty",
             ",".join([str(rhs.id()) for rhs in lowest_rhs_structures]),
-            self._calculation.get_model(),
+            self.get_model(),
             self._calculation,
             rhs_structure,
         )
@@ -474,7 +549,8 @@ class ScineDissociationCut(ReactJob):
                     frankenstein_rc_atoms.set_position(i, pos + direction)
         # overwrite reactive complex in systems
         rc_calc = self.get_system(self.rc_key)
-        rc_calc.positions = frankenstein_rc_atoms.positions
+        rc_calc.structure = frankenstein_rc_atoms
+        self.systems[self.rc_key] = rc_calc
 
         # check if we resemble the charge we expect
         self.systems, success = readuct.run_single_point_task(self.systems, [self.rc_key], require_charges=True)

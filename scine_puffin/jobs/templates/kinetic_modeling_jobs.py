@@ -51,7 +51,7 @@ class KineticModelingJob(Job, ABC):
             centroid = self._get_aggregate_centroid(a_id, a_type)
             for concentrations, concentration_label in zip(aggregate_wise_concentrations,
                                                            aggregate_wise_labels):
-                c = concentrations[i]
+                c = float(concentrations[i])
                 label = concentration_label + post_fix
                 self._write_concentration_property(centroid, label, c, results)
 
@@ -61,6 +61,8 @@ class KineticModelingJob(Job, ABC):
             for concentrations, concentration_label in zip(reaction_wise_concentrations,
                                                            reaction_wise_labels):
                 c = concentrations[i]
+                if isinstance(c, np.ndarray):
+                    c = float(c[0])
                 label = r_id.string() + concentration_label + post_fix
                 self._write_concentration_property(centroid, label, c, results)
 

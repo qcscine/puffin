@@ -90,7 +90,7 @@ def create_rms_phase_entry(aggregate_str_ids: List[str], enthalpies: List[float]
 
 
 def create_arrhenius_reaction_entry(reactant_names: List[str], product_names: List[str], e_a: float, n: float, a: float,
-                                    type_str: str = "ElementaryReaction") -> Dict[str, Any]:
+                                    type_str: str = "ElementaryReaction", reversible: bool = True) -> Dict[str, Any]:
     """
     Create a reaction entry in the RMS format assuming that the rate constant is given by the Arrhenius equation:
     k = a / T^n exp(-e_a/(k_B T)).
@@ -109,6 +109,8 @@ def create_arrhenius_reaction_entry(reactant_names: List[str], product_names: Li
         Arrhenius prefactor.
     type_str : str (default 'ElementaryReaction')
         Type of the reaction entry (see the RMS documentation for other options).
+    reversible : bool (default True)
+        If true, the reaction is reversible.
 
     Returns
     -------
@@ -125,13 +127,15 @@ def create_arrhenius_reaction_entry(reactant_names: List[str], product_names: Li
         },
         "products": [s for s in product_names],  # copying the list like this avoids id counters in the final yaml file
         "reactants": [s for s in reactant_names],
+        "reversible": reversible,
         "type": type_str
     }
 
 
 def create_rms_reaction_entry(prefactors: List[float], temperature_exponents: List[float],
                               activation_energies: Union[List[float], np.ndarray],
-                              reactant_list: List[Tuple[List[str], List[str]]]) -> List[Dict[str, Any]]:
+                              reactant_list: List[Tuple[List[str], List[str]]],
+                              reversibility: Optional[List[bool]] = None) -> List[Dict[str, Any]]:
     """
     Create the reaction entries for the RMS input dictionary assuming Arrhenius kinetics and that all reactions are
     Elementary Reactions (according to the RMS definition):
@@ -144,11 +148,13 @@ def create_rms_reaction_entry(prefactors: List[float], temperature_exponents: Li
     prefactors : List[float]
         Arrhenius prefactors (a in the equation above).
     temperature_exponents : List[float]
-        Temperature exonents (n in the equation above).
+        Temperature exponents (n in the equation above).
     activation_energies : Union[List[float], np.ndarray]
         Activation energies (e_a in the equation above).
     reactant_list : List[Tuple[List[str], List[str]]]
         LHS (tuple[0]) and RHS (tuple[1]) of all reactions.
+    reversibility : Optional[List[bool]]
+        If given these flags signal whether a reaction is reversible or not.
 
     Returns
     -------
@@ -157,10 +163,16 @@ def create_rms_reaction_entry(prefactors: List[float], temperature_exponents: Li
     """
     reaction_type_str = "ElementaryReaction"
     reaction_list = []
-    for a, n, e_a, reactants in zip(prefactors, temperature_exponents, activation_energies, reactant_list):
+    if reversibility is None:
+        reversibility = [True] * len(prefactors)
+    elif len(reversibility) != len(prefactors):
+        raise ValueError("Reversibility information must be provided for each reaction.")
+    for a, n, e_a, reactants, reversible in zip(prefactors, temperature_exponents, activation_energies, reactant_list,
+                                                reversibility):
         lhs_str_ids = reactants[0]
         rhs_str_ids = reactants[1]
-        reaction_list.append(create_arrhenius_reaction_entry(lhs_str_ids, rhs_str_ids, e_a, n, a, reaction_type_str))
+        reaction_list.append(create_arrhenius_reaction_entry(lhs_str_ids, rhs_str_ids, e_a, n, a, reaction_type_str,
+                                                             reversible))
     return reaction_list
 
 
@@ -219,7 +231,8 @@ def create_rms_yml_file(aggregate_str_ids: List[str],
                         activation_energies: Union[List[float], np.ndarray],
                         reactants: List[Tuple[List[str], List[str]]],
                         file_name: str, solvent_name: Optional[str] = None, solvent_viscosity: Optional[float] = None,
-                        solvent_aggregate_index: Optional[int] = None) -> None:
+                        solvent_aggregate_index: Optional[int] = None,
+                        reversibility: Optional[List[bool]] = None) -> None:
     """
     Write the yml file input for RMS.
 
@@ -247,6 +260,8 @@ def create_rms_yml_file(aggregate_str_ids: List[str],
         The solvent's viscosity in Pa s.
     solvent_aggregate_index : Optional[int] (default None)
         The index of the solvent in the aggregte id list. This is only required if the solvent is a reacting species.
+    reversibility : Optional[List[bool]]
+        If given these flags signal whether a reaction is reversible or not.
     """
     solvent_aggregate_id_str = None
     solvent_in_aggregate_list = False
@@ -255,7 +270,8 @@ def create_rms_yml_file(aggregate_str_ids: List[str],
         solvent_in_aggregate_list = True
     phase_entry = create_rms_phase_entry(aggregate_str_ids, enthalpies, entropies,
                                          None if solvent_in_aggregate_list else solvent_name)
-    reaction_entry = create_rms_reaction_entry(prefactors, temperature_exponents, activation_energies, reactants)
+    reaction_entry = create_rms_reaction_entry(prefactors, temperature_exponents, activation_energies, reactants,
+                                               reversibility)
     unit_entry = create_rms_units_entry()
     input_dictionary = {
         "Phases": phase_entry,

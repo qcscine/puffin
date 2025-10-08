@@ -136,12 +136,16 @@ class JobTestCase(unittest.TestCase):
 
         return config
 
-    def run_job(self, job, calculation, config):
+    def run_job(self, job, calculation, config, clear_job: bool = True):
         try:
             success = job.run(self.manager, calculation, config)
             assert success
-            job.clear()
+            if clear_job:
+                job.clear()
         except BaseException as e:
+            print(calculation.get_raw_output())
+            print("---------------------------")
             print(calculation.get_comment())
-            job.clear()
+            if clear_job:
+                job.clear()
             raise e

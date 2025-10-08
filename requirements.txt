@@ -11,3 +11,4 @@ sphinx_rtd_theme
 sphinx_autodoc_typehints
 sphinx_copybutton
 salib
+typing-extensions

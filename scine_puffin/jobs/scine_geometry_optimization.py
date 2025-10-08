@@ -151,14 +151,30 @@ class ScineGeometryOptimization(OptimizationJob, ScinePropensityJob):
 
             # Graph generation
             graph, systems = self.make_graph_from_calc(systems, opt_names[0])
+            opt_calc = self.get_calc(opt_names[0], systems)
             old_label = structure.get_label()
             new_label = self.determine_new_label(old_label, graph, structure.has_property("surface_atom_indices"))
 
+            # If only distance connectivity is used, don't expect bond orders
+            # bond_orders are required for the connectivity job class and there is no easy way to adapt the
+            # own_expected_results
+            if self.connectivity_settings["only_distance_connectivity"]:
+                reduced_expected_results = self.own_expected_results  # from optimization_job
+            else:
+                reduced_expected_results = None
+
             new_structure = self.optimization_postprocessing(
-                True, systems, opt_names, structure, new_label, program_helper
+                True, systems, opt_names, structure, new_label, program_helper,
+                expected_results=reduced_expected_results
             )
+            # # # Add graph information to the new structure
             if graph:
-                new_structure.set_graph("masm_cbor_graph", graph)
+                # # # Bond orders should already exist due to call of 'make_graph_from_calc'
+                if self.connectivity_settings["only_distance_connectivity"]:
+                    bond_orders = self.distance_bond_orders(opt_calc.structure, surface_indices=None)
+                else:
+                    bond_orders = opt_calc.get_results().bond_orders  # type: ignore
+                self.add_graph(new_structure, bond_orders)
 
             if optimize_cell:
                 assert isinstance(new_pbc, str)

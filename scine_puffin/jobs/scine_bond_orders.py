@@ -112,7 +112,6 @@ class ScineBondOrders(ConnectivityJob):
                 systems, success = readuct.run_single_point_task(
                     systems, keys, require_bond_orders=True, **task_settings
                 )
-
                 self.throw_if_not_successful(success, systems, keys)
                 bond_orders = self.get_calc(keys[0], systems).get_results().bond_orders  # type: ignore
                 if bond_orders is None:

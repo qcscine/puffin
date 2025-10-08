@@ -8,6 +8,7 @@ from os import path
 from setuptools import setup, find_packages
 import sys
 
+
 min_version = (3, 6)
 if sys.version_info < min_version:
     error = """
@@ -34,8 +35,9 @@ with open(path.join(here, "requirements.txt")) as requirements_file:
 with open(path.join(here, "README.rst"), encoding="utf-8") as readme_file:
     readme = readme_file.read()
 
-with open('scine_puffin/_version.py') as f:
-    exec(f.read())
+with open(path.join(here, 'scine_puffin', '_version.py'), encoding='utf-8') as f:
+    exec(f.read())  # This will set the __version__ variable
+
 
 # Define the setup
 setup(

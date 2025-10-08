@@ -148,7 +148,7 @@ class ScineReactComplexAfirJobTest(JobTestCase):
         elementary_steps = self.manager.get_collection("elementary_steps")
         assert calculation.get_status() == db.Status.COMPLETE
         results = calculation.get_results()
-        assert len(results.property_ids) == 11
+        assert len(results.property_ids) == 15
         assert len(results.structure_ids) == 3 + 2  # re-optimized reactants (x2) + complex + TS + product
         assert len(results.elementary_step_ids) == 2
         new_elementary_step_one = db.ElementaryStep(results.elementary_step_ids[0], elementary_steps)

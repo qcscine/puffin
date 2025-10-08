@@ -74,7 +74,7 @@ class ScineReactTsGuess(ReactJob):
                + ReactJob.required_packages_docstring()
                )
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.name = "Scine React Job based on TS Guess"
         self.exploration_key = ""
@@ -147,9 +147,10 @@ class ScineReactTsGuess(ReactJob):
                 [ts_guess_structure.get_charge()],
                 [ts_guess_structure.get_multiplicity()],
                 settings_manager.calculator_settings,
-                False,
-                SubTaskToReaductCall.TSOPT,
-                "tsopt"
+                method_family=None,
+                stop_on_error=False,
+                readuct_task=SubTaskToReaductCall.TSOPT,
+                task_settings_key="tsopt"
             )
             if len(names) != 1:
                 self.raise_named_exception("Optimization of the TS guess yielded multiple structures, "

@@ -250,7 +250,6 @@ class TurbomoleGeometryOptimization(TurbomoleJob):
 
         # Generate database results
         db_results = calculation.get_results()
-        db_results.clear()
 
         # New structure
         new_structure = db.Structure()

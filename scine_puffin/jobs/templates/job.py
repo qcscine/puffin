@@ -8,7 +8,7 @@ See LICENSE.txt for details.
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from functools import wraps
-from typing import Union, Callable, List, Optional, Tuple, Iterator, Any, TYPE_CHECKING, Type
+from typing import Union, Callable, List, Optional, Tuple, Iterator, Any, TYPE_CHECKING, Type, Dict
 from typing_extensions import TypeGuard, TypeVar, ParamSpec, Concatenate
 
 import shutil
@@ -57,12 +57,18 @@ def job_configuration_wrapper(run: Callable):
     A wrapping function for the run method of a Job instance
 
     - Configures run (setting class members for specific database Calculation)
+    - Clears the results and outputs at the beginning
     - Additionally Try/Catch safety to avoid dying pending jobs without error
     """
 
     @wraps(run)
     def _impl(self, manager: db.Manager, calculation: db.Calculation, config: Configuration):
         self.configure_run(manager, calculation, config)
+        calculation.clear_raw_output()
+        calculation.clear_comment()
+        db_results = calculation.get_results()
+        db_results.clear()
+        calculation.set_results(db_results)
         try:
             success = run(self, manager, calculation, config)
         except BaseException as e:
@@ -132,6 +138,24 @@ class Job(ABC):
             execution of the job.
         """
         raise NotImplementedError
+
+    @classmethod
+    def settings_based_required_programs(cls, settings: Dict[str, Any]) -> List[str]:  # pylint: disable=unused-argument
+        """
+        Allows a job to enforce additional programs that are dependent on settings given to the job.
+        The default implementation returns the same as `required_programs`.
+
+        Parameters
+        ----------
+        settings : Dict[str, Any]
+            The settings of the job
+
+        Returns
+        -------
+        List[str]
+            A list of names of programs/packages that are required for the execution of the job.
+        """
+        return cls.required_programs()
 
     @classmethod
     def optional_settings_doc(cls) -> str:

@@ -4,7 +4,6 @@ __copyright__ = """ This code is licensed under the 3-clause BSD license.
 Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Group.
 See LICENSE.txt for details.
 """
-
 from abc import ABC
 from typing import TYPE_CHECKING, List
 
@@ -64,72 +63,93 @@ class HessianJob(ScineJob, ABC):
             return  # unreachable only for linter
         if not structure.has_property("electronic_energy"):
             self.store_energy(system, structure)
-        if results.hessian is None:
+        if results.hessian is None and results.partial_hessian is None:
             self.raise_named_exception(f"{system.name()} is missing Hessian result")
             return  # unreachable only for linter
-        # Get normal modes and frequencies
-        atoms = structure.get_atoms()
-        modes_container = utils.normal_modes.calculate(results.hessian, atoms.elements, atoms.positions)
-        # Wavenumbers in cm-1
-        wavenumbers = modes_container.get_wave_numbers()
-        # Frequencies in atomic units
-        frequencies = np.array(wavenumbers) * utils.HARTREE_PER_INVERSE_CENTIMETER / (2 * utils.PI)
-        # Get normal modes: Flattened mass-weighted eigenvectors/normal modes as matrix columns
-        # lengths are in a.u. and masses in u
-        modes = np.column_stack([modes_container.get_mode(i).flatten() for i in range(modes_container.size())])
-        model = self._calculation.get_model()
 
-        # store properties
+        model = self.get_model()
+        if results.partial_hessian is not None:
+            tmp_hessian_for_db: np.ndarray = results.partial_hessian.matrix
+            # NOTE: Requires Int vector as property
+            self.store_property(
+                self._properties,
+                "qm_atoms",
+                "VectorProperty",
+                results.partial_hessian.indices,
+                model,
+                self._calculation,
+                structure,
+            )
+        else:
+            tmp_hessian_for_db = results.hessian  # type: ignore
+
         self.store_property(
             self._properties,
             "hessian",
             "DenseMatrixProperty",
-            results.hessian,
-            model,
-            self._calculation,
-            structure,
-        )
-        self.store_property(
-            self._properties,
-            "normal_modes",
-            "DenseMatrixProperty",
-            modes,
-            model,
-            self._calculation,
-            structure,
-        )
-        self.store_property(
-            self._properties,
-            "frequencies",
-            "VectorProperty",
-            frequencies,
+            tmp_hessian_for_db,
             model,
             self._calculation,
             structure,
         )
 
-        thermo_container = results.thermochemistry
-        if thermo_container is None:
-            thermo_calculator = utils.ThermochemistryCalculator(results.hessian, atoms, structure.get_multiplicity(),
-                                                                results.energy)
-            thermo_calculator.set_temperature(float(model.temperature))
-            thermo_calculator.set_pressure(float(model.pressure))
-            thermo_container = thermo_calculator.calculate()
-        self.store_property(
-            self._properties,
-            "gibbs_free_energy",
-            "NumberProperty",
-            thermo_container.overall.gibbs_free_energy,
-            model,
-            self._calculation,
-            structure,
-        )
-        self.store_property(
-            self._properties,
-            "gibbs_energy_correction",
-            "NumberProperty",
-            thermo_container.overall.gibbs_free_energy - results.energy,
-            model,
-            self._calculation,
-            structure,
-        )
+        # NOTE: only do normal modes and thermochemistry if Hessian is available
+        # do not store for Partial Hessian, gets too big and crashes DB, should be sparse
+        if results.hessian is not None:
+            # Get normal modes and frequencies
+            atoms = structure.get_atoms()
+            modes_container = utils.normal_modes.calculate(results.hessian, atoms.elements, atoms.positions)
+            # Wavenumbers in cm-1
+            wavenumbers = modes_container.get_wave_numbers()
+            # Frequencies in atomic units
+            frequencies = np.array(wavenumbers) * utils.HARTREE_PER_INVERSE_CENTIMETER / (2 * utils.PI)
+            # Get normal modes: Flattened mass-weighted eigenvectors/normal modes as matrix columns
+            # lengths are in a.u. and masses in u
+            modes = np.column_stack([modes_container.get_mode(i).flatten() for i in range(modes_container.size())])
+
+            # store properties
+            self.store_property(
+                self._properties,
+                "normal_modes",
+                "DenseMatrixProperty",
+                modes,
+                model,
+                self._calculation,
+                structure,
+            )
+            self.store_property(
+                self._properties,
+                "frequencies",
+                "VectorProperty",
+                frequencies,
+                model,
+                self._calculation,
+                structure,
+            )
+
+            thermo_container = results.thermochemistry
+            # NOTE: could avoid thermochemistry with `and results.partial_hessian is None`, if one does not want it
+            if thermo_container is None:
+                thermo_calculator = utils.ThermochemistryCalculator(results.hessian, atoms,
+                                                                    structure.get_multiplicity(), results.energy)
+                thermo_calculator.set_temperature(float(model.temperature))
+                thermo_calculator.set_pressure(float(model.pressure))
+                thermo_container = thermo_calculator.calculate()
+            self.store_property(
+                self._properties,
+                "gibbs_free_energy",
+                "NumberProperty",
+                thermo_container.overall.gibbs_free_energy,
+                model,
+                self._calculation,
+                structure,
+            )
+            self.store_property(
+                self._properties,
+                "gibbs_energy_correction",
+                "NumberProperty",
+                thermo_container.overall.gibbs_free_energy - results.energy,
+                model,
+                self._calculation,
+                structure,
+            )

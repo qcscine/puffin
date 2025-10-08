@@ -5,7 +5,7 @@ Copyright ETH Zurich, Department of Chemistry and Applied Biosciences, Reiher Gr
 See LICENSE.txt for details.
 """
 
-from typing import Union
+from typing import Union, List
 
 from ..testcases import (
     JobTestCase,
@@ -20,6 +20,121 @@ from ..db_setup import (
 
 
 class RMSKineticModelingTest(JobTestCase):
+    def setup_sensitivity_job(self):
+        from scine_puffin.jobs.rms_kinetic_modeling import RmsKineticModeling
+        import scine_database as db
+
+        n_compounds = 15
+        all_compounds = [add_compound_and_structure(self.manager) for _ in range(n_compounds)]
+        all_structure_ids = [c.get_centroid() for c in all_compounds]
+        c_ids = [c.id() for c in all_compounds]
+        all_reaction_ids = [
+            add_reaction(self.manager, [c_ids[8]], [c_ids[11], c_ids[12]]).id(),
+            add_reaction(self.manager, [c_ids[5]], [c_ids[8]]).id(),
+            add_reaction(self.manager, [c_ids[1], c_ids[1]], [c_ids[5]]).id(),
+            add_reaction(self.manager, [c_ids[9]], [c_ids[13], c_ids[14], c_ids[1]]).id(),
+            add_reaction(self.manager, [c_ids[4]], [c_ids[2]]).id(),
+            add_reaction(self.manager, [c_ids[4]], [c_ids[9]]).id(),
+            add_reaction(self.manager, [c_ids[0], c_ids[1]], [c_ids[2]]).id(),
+            add_reaction(self.manager, [c_ids[0], c_ids[1]], [c_ids[4]]).id(),
+            add_reaction(self.manager, [c_ids[5]], [c_ids[7]]).id(),
+            add_reaction(self.manager, [c_ids[6]], [c_ids[10], c_ids[1]]).id(),
+            add_reaction(self.manager, [c_ids[5]], [c_ids[6]]).id(),
+            add_reaction(self.manager, [c_ids[2]], [c_ids[9]]).id(),
+            add_reaction(self.manager, [c_ids[4]], [c_ids[3], c_ids[1]]).id(),
+            add_reaction(self.manager, [c_ids[3], c_ids[1]], [c_ids[2]]).id()
+        ]
+        ea = [0.0,
+              141258.005874334,
+              22350.1045931669,
+              0.0,
+              37769.2845750187,
+              87707.0192024107,
+              24118.3178788118,
+              23942.6512074803,
+              149593.511487877,
+              0.0,
+              191188.014352586,
+              132868.656300405,
+              0.0,
+              32749.0495510235]
+        a = [8817012463061.74 for _ in all_reaction_ids]
+        n = [0 for _ in all_reaction_ids]
+        entropies = [483.928799667987,
+                     294.419261898161,
+                     652.415361315592,
+                     477.014094417863,
+                     675.345450235711,
+                     515.52359453181,
+                     422.822929205339,
+                     417.145780635592,
+                     507.650951023459,
+                     718.709871540267,
+                     280.378644164628,
+                     305.918813708162,
+                     277.578619144421,
+                     225.609287171713,
+                     404.146435972299]
+        enthalpies = [-1161186535.6783,
+                      -506407081.521706,
+                      -1667622787.30424,
+                      -1161198092.3675,
+                      -1667613260.10378,
+                      -1012822836.15114,
+                      -1012816820.21241,
+                      -1012951947.21609,
+                      -1012883102.19312,
+                      -1667578869.90783,
+                      -506390045.122877,
+                      -509583214.885545,
+                      -503295550.040687,
+                      -303469253.644786,
+                      -857659812.764682]
+        start_concentrations = [1.0, 1.0] + [0.0 for _ in range(len(all_compounds) - 2)]
+
+        model = db.Model('FAKE', '', '')
+        t = 430.15
+        model.temperature = t
+        model.solvent = "water"
+        job = db.Job('rms_kinetic_modeling')
+        settings = {
+            "solver": "CVODE_BDF",
+            "ea": ea,
+            "arrhenius_prefactors": a,
+            "arrhenius_temperature_exponents": n,
+            "start_concentrations": start_concentrations,
+            "reaction_ids": [str(oid) for oid in all_reaction_ids],
+            "aggregate_ids": [str(oid) for oid in c_ids],
+            "aggregate_types": [db.CompoundOrFlask.COMPOUND for _ in all_compounds],
+            "entropies": entropies,
+            "enthalpies": enthalpies,
+            "energy_model_program": "DUMMY",
+            "phase_type": "ideal_dilute_solution",
+            "max_time": 100.0,
+            "absolute_tolerance": 1e-20,
+            "relative_tolerance": 1e-9,
+            "reactor_pressure": 1E+5,
+            "reactor_solvent": "water",
+            "diffusion_limited": False,
+            "sensitivity_analysis": "morris",
+            "ea_lower_uncertainty": [1e+4 for _ in all_reaction_ids],
+            "ea_upper_uncertainty": [1e+4 for _ in all_reaction_ids],
+            "enthalpy_lower_uncertainty": [5e+3 for _ in c_ids],
+            "enthalpy_upper_uncertainty": [5e+3 for _ in c_ids],
+            "sample_size": 2,
+            "local_sensitivities": True,
+            "save_oaat_var": True,
+            "enforce_mass_balance": False,
+            "screen_global_sens_size": 0
+        }
+        calculation = add_calculation(self.manager, model, job, all_structure_ids, settings)
+        # Run calculation/job
+        config = self.get_configuration()
+        config["resources"]["cores"] = 2
+        job = RmsKineticModeling()
+        job.force_parallel = True
+        job.prepare(config["daemon"]["job_dir"], calculation.id())
+        return calculation, job, config, all_compounds
 
     @skip_without('database', "julia", "diffeqpy")
     def test_concentrations_ideal_gas(self):
@@ -173,78 +288,13 @@ class RMSKineticModelingTest(JobTestCase):
             self.assertAlmostEqual(concentration_flux.get_data(), reference_flux[i], delta=1e-1)
 
     @skip_without('database', "julia", "diffeqpy")
-    def test_sensitivity_analysis(self):
+    def test_sensitivity_analysis(self) -> None:
         from scine_puffin.jobs.rms_kinetic_modeling import RmsKineticModeling
         import scine_database as db
 
-        n_compounds = 15
-        all_compounds = [add_compound_and_structure(self.manager) for _ in range(n_compounds)]
-        all_structure_ids = [c.get_centroid() for c in all_compounds]
-        c_ids = [c.id() for c in all_compounds]
-        all_reaction_ids = [
-            add_reaction(self.manager, [c_ids[8]], [c_ids[11], c_ids[12]]).id(),
-            add_reaction(self.manager, [c_ids[5]], [c_ids[8]]).id(),
-            add_reaction(self.manager, [c_ids[1], c_ids[1]], [c_ids[5]]).id(),
-            add_reaction(self.manager, [c_ids[9]], [c_ids[13], c_ids[14], c_ids[1]]).id(),
-            add_reaction(self.manager, [c_ids[4]], [c_ids[2]]).id(),
-            add_reaction(self.manager, [c_ids[4]], [c_ids[9]]).id(),
-            add_reaction(self.manager, [c_ids[0], c_ids[1]], [c_ids[2]]).id(),
-            add_reaction(self.manager, [c_ids[0], c_ids[1]], [c_ids[4]]).id(),
-            add_reaction(self.manager, [c_ids[5]], [c_ids[7]]).id(),
-            add_reaction(self.manager, [c_ids[6]], [c_ids[10], c_ids[1]]).id(),
-            add_reaction(self.manager, [c_ids[5]], [c_ids[6]]).id(),
-            add_reaction(self.manager, [c_ids[2]], [c_ids[9]]).id(),
-            add_reaction(self.manager, [c_ids[4]], [c_ids[3], c_ids[1]]).id(),
-            add_reaction(self.manager, [c_ids[3], c_ids[1]], [c_ids[2]]).id()
-        ]
-        ea = [0.0,
-              141258.005874334,
-              22350.1045931669,
-              0.0,
-              37769.2845750187,
-              87707.0192024107,
-              24118.3178788118,
-              23942.6512074803,
-              149593.511487877,
-              0.0,
-              191188.014352586,
-              132868.656300405,
-              0.0,
-              32749.0495510235]
-        a = [8817012463061.74 for _ in all_reaction_ids]
-        n = [0 for _ in all_reaction_ids]
-        entropies = [483.928799667987,
-                     294.419261898161,
-                     652.415361315592,
-                     477.014094417863,
-                     675.345450235711,
-                     515.52359453181,
-                     422.822929205339,
-                     417.145780635592,
-                     507.650951023459,
-                     718.709871540267,
-                     280.378644164628,
-                     305.918813708162,
-                     277.578619144421,
-                     225.609287171713,
-                     404.146435972299]
-        enthalpies = [-1161186535.6783,
-                      -506407081.521706,
-                      -1667622787.30424,
-                      -1161198092.3675,
-                      -1667613260.10378,
-                      -1012822836.15114,
-                      -1012816820.21241,
-                      -1012951947.21609,
-                      -1012883102.19312,
-                      -1667578869.90783,
-                      -506390045.122877,
-                      -509583214.885545,
-                      -503295550.040687,
-                      -303469253.644786,
-                      -857659812.764682]
-        start_concentrations = [1.0, 1.0] + [0.0 for _ in range(len(all_compounds) - 2)]
-
+        calculation, job, config, all_compounds = self.setup_sensitivity_job()
+        model = calculation.get_model()
+        settings = calculation.get_settings()
         # reference from working run.
         reference_final = [7.48691760e-02, 8.98107191e-01, 2.21462075e-03, 8.25022273e-01, 2.43288613e-03,
                            4.82799549e-02, 2.35394815e-14, 2.90416198e-05, 1.17193433e-09, 2.98648216e-05,
@@ -285,47 +335,6 @@ class RMSKineticModelingTest(JobTestCase):
                               2300.5616220011425, 385.15557455260193, 5.93208300e-18, 5.49343669e-10,
                               6.42188978e-06, 1.75102380e-03, 5.04266808e-18, 5.28459041e-06,
                               5.28459041e-06, 0.0002534526815016325, 0.0002534526815016325]
-
-        model = db.Model('FAKE', '', '')
-        t = 430.15
-        model.temperature = t
-        model.solvent = "water"
-        job = db.Job('rms_kinetic_modeling')
-        settings = {
-            "solver": "CVODE_BDF",
-            "ea": ea,
-            "arrhenius_prefactors": a,
-            "arrhenius_temperature_exponents": n,
-            "start_concentrations": start_concentrations,
-            "reaction_ids": [str(oid) for oid in all_reaction_ids],
-            "aggregate_ids": [str(oid) for oid in c_ids],
-            "aggregate_types": [db.CompoundOrFlask.COMPOUND for _ in all_compounds],
-            "entropies": entropies,
-            "enthalpies": enthalpies,
-            "energy_model_program": "DUMMY",
-            "phase_type": "ideal_dilute_solution",
-            "max_time": 100.0,
-            "absolute_tolerance": 1e-20,
-            "relative_tolerance": 1e-9,
-            "reactor_pressure": 1E+5,
-            "reactor_solvent": "water",
-            "diffusion_limited": False,
-            "sensitivity_analysis": "morris",
-            "ea_lower_uncertainty": [1e+4 for _ in all_reaction_ids],
-            "ea_upper_uncertainty": [1e+4 for _ in all_reaction_ids],
-            "enthalpy_lower_uncertainty": [5e+3 for _ in c_ids],
-            "enthalpy_upper_uncertainty": [5e+3 for _ in c_ids],
-            "sample_size": 2,
-            "local_sensitivities": True,
-            "save_oaat_var": True,
-            "enforce_mass_balance": False,
-            "screen_global_sens_size": 0
-        }
-        calculation = add_calculation(self.manager, model, job, all_structure_ids, settings)
-        # Run calculation/job
-        config = self.get_configuration()
-        config["resources"]["cores"] = 2
-        job = RmsKineticModeling()
         job.force_parallel = True
         job.prepare(config["daemon"]["job_dir"], calculation.id())
         self.run_job(job, calculation, config)
@@ -338,6 +347,7 @@ class RMSKineticModelingTest(JobTestCase):
         reactions = self.manager.get_collection("reactions")
         compounds = self.manager.get_collection("compounds")
         flasks = self.manager.get_collection("flasks")
+        t = float(model.temperature)
         for prop in properties.iterate_all_properties():
             prop.link(properties)
             assert abs(float(prop.get_model().temperature) - t) < 1e-9
@@ -382,14 +392,15 @@ class RMSKineticModelingTest(JobTestCase):
             self.assertAlmostEqual(var_flux.get_data(), reference_var_flux[i],
                                    delta=1e-2 * max(1.0, reference_var_flux[i]))
 
+        reaction_ids: List[str] = settings["reaction_ids"]  # type: ignore
         for r_str_id, ref_max_sens, ref_final_sens, ref_flux_sens in zip(
-                settings["reaction_ids"], reference_c_max_ea_sens, reference_c_final_ea_sens, reference_c_flux_ea_sens):
+                reaction_ids, reference_c_max_ea_sens, reference_c_final_ea_sens, reference_c_flux_ea_sens):
             reaction = db.Reaction(db.ID(r_str_id), reactions)
             a_id = reaction.get_reactants(db.Side.BOTH)[0][0]
-            a: Union[db.Compound, db.Flask] = db.Compound(a_id, compounds)
-            if not a.exists():
-                a = db.Flask(a_id, flasks)
-            centroid = db.Structure(a.get_centroid(), structures)
+            agg: Union[db.Compound, db.Flask] = db.Compound(a_id, compounds)
+            if not agg.exists():
+                agg = db.Flask(a_id, flasks)
+            centroid = db.Structure(agg.get_centroid(), structures)
             for ref, label in zip([ref_max_sens, ref_final_sens, ref_flux_sens], ["max", "final", "flux"]):
                 prop_label = r_str_id + "_reaction_barrier_sensitivity_oaat_" + label
                 assert centroid.has_property(prop_label)
@@ -415,3 +426,37 @@ class RMSKineticModelingTest(JobTestCase):
             assert structure.has_property("sobol_var_c_max")
             assert structure.has_property("sobol_var_c_final")
             assert structure.has_property("sobol_var_c_flux")
+
+    @skip_without('database', "julia")
+    def test_sensitivity_parameter_mapping(self):
+        from scine_puffin.utilities.kinetic_modeling_sensitivity_analysis import RMSKineticModelingSensitivityAnalysis
+        from scine_puffin.utilities.rms_kinetic_model import RMSKineticModel
+        calculation, _, __, ___ = self.setup_sensitivity_job()
+        settings = calculation.get_settings()
+        settings["sensitivity_analysis"] = "none"
+        calculation.set_settings(settings)
+        model = calculation.get_model()
+        rms_path = ""
+        rms_file_name = "chem.rms"
+
+        rms_model = RMSKineticModel(settings, self.manager, model, rms_path, rms_file_name)
+        rms_model.uq_h_lower = [0.0 for _ in rms_model.uq_h_lower]
+        rms_model.uq_h_upper = [0.0 for _ in rms_model.uq_h_upper]
+        sensitivity_analysis = RMSKineticModelingSensitivityAnalysis(rms_model, 1, 2)
+        parameter_mapping = sensitivity_analysis.get_reduced_parameter_mapping()
+        n_reactions = len(settings["reaction_ids"])
+        n_aggregates = len(settings["aggregate_ids"])
+        assert len(parameter_mapping) == n_reactions
+
+        rms_model.uq_h_lower = [1.0 for _ in rms_model.uq_h_lower]
+        rms_model.uq_h_upper = [1.0 for _ in rms_model.uq_h_upper]
+        rms_model.uq_h_lower[2] = 0.0
+        rms_model.uq_h_upper[2] = 0.0
+        sensitivity_analysis = RMSKineticModelingSensitivityAnalysis(rms_model, 1, 2)
+        parameter_mapping = sensitivity_analysis.get_reduced_parameter_mapping()
+        n_reactions = len(settings["reaction_ids"])
+        assert len(parameter_mapping) == n_reactions + n_aggregates - 1
+        assert parameter_mapping[0] == (0, 0)
+        assert parameter_mapping[1] == (1, 1)
+        assert parameter_mapping[2] == (3, 2)
+        assert parameter_mapping[3] == (4, 3)

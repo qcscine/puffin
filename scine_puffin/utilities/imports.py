@@ -184,3 +184,21 @@ class MissingDependency(ModuleType):
 
     def __call__(self, *args, **kwargs):
         raise MissingDependencyError("Method execution not allowed")
+
+
+class _DummyType(type):
+    def __getattribute__(self, item):
+        if item.startswith("__"):
+            return super().__getattribute__(item)
+        return super().__new__(_DummyType, "DummyType", (type,), globals())
+
+
+class DummyClass(metaclass=_DummyType):
+
+    def __getattribute__(self, item):
+        if item == "__class__":
+            return object.__getattribute__(self, "__class__")
+        try:
+            return object.__getattribute__(self, "cls")
+        except AttributeError:
+            return object.__getattribute__(self, "__class__")

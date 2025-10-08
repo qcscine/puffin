@@ -90,6 +90,7 @@ class ScinePropensityJob(ScineJobWithObservers, ABC):
             structure_charges: List[int],
             structure_multiplicities: List[int],
             calculator_settings: utils.Settings,
+            method_family: Union[str, None] = None,
             stop_on_error: bool = True,
             readuct_task: SubTaskToReaductCall = SubTaskToReaductCall.OPT,
             task_settings_key: Optional[str] = None,
@@ -120,6 +121,9 @@ class ScinePropensityJob(ScineJobWithObservers, ABC):
             The spin multiplicities of the structures.
         calculator_settings : utils.Settings
             The general settings for the Scine calculator. Charge and spin multiplicity will be overwritten.
+        method_family : Optional[str]
+            The method family to use for the calculations,
+            by default None which will lead to the method family of the calculation
         stop_on_error : bool
             If set to False, skip unsuccessful calculations and replace calculator with None
         readuct_task : SubTaskToReaductCall
@@ -137,7 +141,8 @@ class ScinePropensityJob(ScineJobWithObservers, ABC):
         if task_settings_key is None:
             task_settings_key = self.opt_key
         structure_names: List[str] = []
-        method_family = self._calculation.get_model().method_family
+        if method_family is None:
+            method_family = self.get_model().method_family
         # Generate structure systems
         for i, atoms in enumerate(structures):
             name = f"{name_stub}_{i:02d}"
@@ -176,6 +181,7 @@ class ScinePropensityJob(ScineJobWithObservers, ABC):
                     systems, success = readuct.run_single_point_task(
                         systems,
                         [structure_name],
+                        require_charges=not self.connectivity_settings['only_distance_connectivity'],
                         require_bond_orders=not self.connectivity_settings['only_distance_connectivity'],
                     )
                     self.throw_if_not_successful(success, systems, [structure_name], required_properties,
@@ -511,7 +517,8 @@ class ScinePropensityJob(ScineJobWithObservers, ABC):
     @is_configured
     def _store_structure_with_propensity_check(self, name: str, systems: Dict[str, Optional[utils.core.Calculator]],
                                                label: db.Label, enforce_to_save_base_name: bool,
-                                               surface_indices: Optional[Union[List[int], Set[int]]] = None) \
+                                               surface_indices: Optional[Union[List[int], Set[int]]] = None,
+                                               is_qmmm: bool = False) \
             -> db.Structure:
         """
         Stores the structure with the given name in the database, but checks for spin propensities and stores the
@@ -546,6 +553,9 @@ class ScinePropensityJob(ScineJobWithObservers, ABC):
             self.add_graph(new_structure, bond_orders, surface_indices)
             # Label can change based on graph after optimization
             if label not in [db.Label.TS_OPTIMIZED, db.Label.TS_GUESS]:
+                if is_qmmm:
+                    self.store_qm_atoms([i for i in range(0, calc.structure.size())],
+                                        new_structure)
                 new_graph = self._cbor_graph_from_structure(new_structure)
                 new_label = self._determine_new_label_based_on_graph_and_surface_indices(new_graph, surface_indices)
                 if label != new_label:

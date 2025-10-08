@@ -117,8 +117,6 @@ class ScineIrcScan(OptimizationJob):
 
             # clear results
             db_results = calculation.get_results()
-            db_results.clear()
-            calculation.set_results(db_results)
             for name in ["forward", "backward"]:
                 # structure
                 new_structure = self.create_new_structure(systems[name], label)
